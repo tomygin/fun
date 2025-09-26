@@ -13,7 +13,7 @@ def fibonaci (n){
         1
     }else{
          (
-            fibonaci((n - 1))
+            fibonaci(n - 1)
             +
             fibonaci((n - 2))
         )

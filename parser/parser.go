@@ -11,12 +11,11 @@ type Parser struct {
 	cursor int
 }
 
-// NewParser 创建新的parser实例
 func NewParser() *Parser {
 	return &Parser{}
 }
 
-// Parse 主入口函数，相当于Python的__call__
+// Parse 主入口函数，
 func (p *Parser) Parse(tokens []lexer.Token) []any {
 	p.tokens = tokens
 	p.cursor = 0
@@ -91,8 +90,8 @@ func (p *Parser) work() any {
 		if p.back().Value == "++" {
 			return p.selfAddSugar()
 		}
-		// 默认只有自己
-		return p.varSelf()
+		// 检查是否是表达式的一部分
+		return p.parseExpression()
 	case lexer.KEY:
 		switch p.current().Value {
 		case "while":
@@ -111,6 +110,119 @@ func (p *Parser) work() any {
 	}
 
 	panic(fmt.Sprintf("unknown token %+v", p.current()))
+}
+
+// parseExpression 解析表达式（支持运算符优先级）
+func (p *Parser) parseExpression() any {
+	return p.parseComparison()
+}
+
+// parseComparison 解析比较运算符 (==, !=, <, >, <=, >=)
+func (p *Parser) parseComparison() any {
+	left := p.parseAddition()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR {
+		op := p.current().Value
+		if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
+			p.cursor++
+			right := p.parseAddition()
+			left = []any{p.convertOperator(op), left, right}
+		} else {
+			break
+		}
+	}
+
+	return left
+}
+
+// parseAddition 解析加减运算符
+func (p *Parser) parseAddition() any {
+	left := p.parseMultiplication()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR {
+		op := p.current().Value
+		if op == "+" || op == "-" {
+			p.cursor++
+			right := p.parseMultiplication()
+			left = []any{p.convertOperator(op), left, right}
+		} else {
+			break
+		}
+	}
+
+	return left
+}
+
+// parseMultiplication 解析乘除运算符
+func (p *Parser) parseMultiplication() any {
+	left := p.parsePrimary()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR {
+		op := p.current().Value
+		if op == "*" || op == "/" {
+			p.cursor++
+			right := p.parsePrimary()
+			left = []any{p.convertOperator(op), left, right}
+		} else {
+			break
+		}
+	}
+
+	return left
+}
+
+// parsePrimary 解析基本表达式
+func (p *Parser) parsePrimary() any {
+	switch p.current().Type {
+	case lexer.INT:
+		return p.intLiteral()
+	case lexer.FLOAT:
+		return p.floatLiteral()
+	case lexer.STRING:
+		return p.stringLiteral()
+	case lexer.IDENTIFIER:
+		// 函数调用
+		if p.back().Value == "(" {
+			return p.varCall()
+		}
+		// 表访问
+		if p.back().Value == "[" {
+			return p.tableSugar()
+		}
+		// 点访问
+		if p.back().Value == "." {
+			return p.tablePointSugar()
+		}
+		// 变量
+		return p.varSelf()
+	case lexer.BRACKETS:
+		if p.current().Value == "(" {
+			return p.expressionSugar()
+		}
+	}
+
+	panic(fmt.Sprintf("unexpected token in expression: %+v", p.current()))
+}
+
+// convertOperator 转换操作符
+func (p *Parser) convertOperator(op string) string {
+	convertMap := map[string]string{
+		"*":  "mul",
+		"/":  "div",
+		"-":  "sub",
+		"+":  "add",
+		">":  "gt",
+		"<":  "lt",
+		">=": "gte",
+		"<=": "lte",
+		"==": "eq",
+		"!=": "neq",
+	}
+
+	if converted, ok := convertMap[op]; ok {
+		return converted
+	}
+	return op
 }
 
 // intLiteral 解析整数
@@ -169,7 +281,7 @@ func (p *Parser) operatorLiteral() string {
 func (p *Parser) varDeclare() []any {
 	name := p.current().Value
 	p.cursor += 2
-	value := p.work()
+	value := p.parseExpression()
 	return []any{"var", name, value}
 }
 
@@ -177,7 +289,7 @@ func (p *Parser) varDeclare() []any {
 func (p *Parser) varAssign() []any {
 	name := p.current().Value
 	p.cursor += 2
-	value := p.work()
+	value := p.parseExpression()
 	return []any{"assign", name, value}
 }
 
@@ -195,7 +307,7 @@ func (p *Parser) varCall() []any {
 	args := []any{name}
 
 	for p.current().Value != ")" {
-		args = append(args, p.work())
+		args = append(args, p.parseExpression())
 	}
 	p.cursor++
 	return args
@@ -204,7 +316,7 @@ func (p *Parser) varCall() []any {
 // whileStatement while循环
 func (p *Parser) whileStatement() []any {
 	p.cursor++
-	condition := p.work()
+	condition := p.parseExpression()
 
 	if p.current().Value != "{" {
 		panic("while loop must be '{'")
@@ -222,7 +334,7 @@ func (p *Parser) whileStatement() []any {
 // ifStatement if语句
 func (p *Parser) ifStatement() []any {
 	p.cursor++
-	condition := p.work()
+	condition := p.parseExpression()
 
 	if p.current().Value != "{" {
 		panic("if statement must be '{'")
@@ -294,7 +406,7 @@ func (p *Parser) defStatement() []any {
 func (p *Parser) tableSugar() []any {
 	tableName := p.current().Value
 	p.cursor += 2
-	tableKey := p.work()
+	tableKey := p.parseExpression()
 
 	if p.current().Value != "]" {
 		panic("table sugar must be ']'")
@@ -303,7 +415,7 @@ func (p *Parser) tableSugar() []any {
 	// set table
 	if p.back().Value == "=" {
 		p.cursor += 2
-		tableValue := p.work()
+		tableValue := p.parseExpression()
 		return []any{"table_set", tableName, tableKey, tableValue}
 	}
 
@@ -327,7 +439,7 @@ func (p *Parser) tablePointSugar() []any {
 	// set table
 	if p.back().Value == "=" {
 		p.cursor += 2
-		tableValue := p.work()
+		tableValue := p.parseExpression()
 		return []any{"table_set", tableName, tableKey, tableValue}
 	}
 
@@ -343,63 +455,13 @@ func (p *Parser) selfAddSugar() []any {
 	return []any{"assign", value, []any{"add", value, 1}}
 }
 
-// expressionSugar 表达式语法糖
+// expressionSugar 表达式语法糖（括号表达式）
 func (p *Parser) expressionSugar() any {
-	p.cursor++
-	var operations []string
-	var elements []any
-	isOperation := false
-
-	// 操作符优先级顺序
-	rank := []string{"mul", "div", "add", "sub", "gt", "lt", "gte", "lte", "eq", "neq"}
-
-	for p.current().Value != ")" {
-		ele := p.work()
-
-		if isOperation {
-			if strEle, ok := ele.(string); ok {
-				operations = append(operations, strEle)
-			}
-		} else {
-			elements = append(elements, ele)
-		}
-
-		isOperation = !isOperation
+	p.cursor++ // 跳过 '('
+	result := p.parseExpression()
+	if p.current().Value != ")" {
+		panic("expected ')' after expression")
 	}
-
-	// 按照优先级构建
-	for len(operations) > 0 {
-		index := 0
-		found := false
-
-		// 找出优先级最高的操作符
-		for _, op := range rank {
-			for i, operation := range operations {
-				if operation == op {
-					index = i
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-
-		if !found {
-			panic("unknown operation, not in operations")
-		}
-
-		// 构建表达式树
-		op := operations[index]
-		operations = append(operations[:index], operations[index+1:]...)
-
-		left := elements[index]
-		right := elements[index+1]
-		elements = append(elements[:index], elements[index+2:]...)
-		elements = append(elements[:index], append([]any{[]any{op, left, right}}, elements[index:]...)...)
-	}
-
-	p.cursor++
-	return elements[0]
+	p.cursor++ // 跳过 ')'
+	return result
 }
