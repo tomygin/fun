@@ -78,14 +78,6 @@ func (p *Parser) work() any {
 		if p.back().Value == "(" {
 			return p.varCall()
 		}
-		// 表访问
-		if p.back().Value == "[" {
-			return p.tableSugar()
-		}
-		// 点访问
-		if p.back().Value == "." {
-			return p.tablePointSugar()
-		}
 		// 自增
 		if p.back().Value == "++" {
 			return p.selfAddSugar()
@@ -100,6 +92,8 @@ func (p *Parser) work() any {
 			return p.ifStatement()
 		case "def":
 			return p.defStatement()
+		case "return":
+			return p.returnStatement()
 		}
 	case lexer.BRACKETS:
 		if p.current().Value == "(" {
@@ -108,7 +102,6 @@ func (p *Parser) work() any {
 	case lexer.OPERATOR:
 		return p.operatorLiteral()
 	}
-
 	panic(fmt.Sprintf("unknown token %+v", p.current()))
 }
 
@@ -185,14 +178,6 @@ func (p *Parser) parsePrimary() any {
 		if p.back().Value == "(" {
 			return p.varCall()
 		}
-		// 表访问
-		if p.back().Value == "[" {
-			return p.tableSugar()
-		}
-		// 点访问
-		if p.back().Value == "." {
-			return p.tablePointSugar()
-		}
 		// 变量
 		return p.varSelf()
 	case lexer.BRACKETS:
@@ -200,7 +185,6 @@ func (p *Parser) parsePrimary() any {
 			return p.expressionSugar()
 		}
 	}
-
 	panic(fmt.Sprintf("unexpected token in expression: %+v", p.current()))
 }
 
@@ -402,50 +386,19 @@ func (p *Parser) defStatement() []any {
 	return []any{"def", name, args, body}
 }
 
-// tableSugar 表访问语法糖
-func (p *Parser) tableSugar() []any {
-	tableName := p.current().Value
-	p.cursor += 2
-	tableKey := p.parseExpression()
+// returnStatement 处理 return 语句
+func (p *Parser) returnStatement() []any {
+	p.cursor++ // 跳过 return 关键字
 
-	if p.current().Value != "]" {
-		panic("table sugar must be ']'")
+	// 检查是否有返回值
+	if p.current().Value == "}" || p.current().Type == lexer.EOF {
+		// 没有返回值的 return
+		return []any{"return", nil}
 	}
 
-	// set table
-	if p.back().Value == "=" {
-		p.cursor += 2
-		tableValue := p.parseExpression()
-		return []any{"table_set", tableName, tableKey, tableValue}
-	}
-
-	// get table
-	p.cursor++
-	return []any{"table_get", tableName, tableKey}
-}
-
-// tablePointSugar 点访问语法糖
-func (p *Parser) tablePointSugar() []any {
-	tableName := p.current().Value
-	p.cursor += 2
-
-	var tableKey string
-	if p.current().Type == lexer.IDENTIFIER {
-		tableKey = "'" + p.current().Value + "'"
-	} else {
-		panic("table key must be identifier or number")
-	}
-
-	// set table
-	if p.back().Value == "=" {
-		p.cursor += 2
-		tableValue := p.parseExpression()
-		return []any{"table_set", tableName, tableKey, tableValue}
-	}
-
-	// get table
-	p.cursor++
-	return []any{"table_get", tableName, tableKey}
+	// 有返回值的 return
+	value := p.parseExpression()
+	return []any{"return", value}
 }
 
 // selfAddSugar 自增语法糖

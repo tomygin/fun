@@ -1,48 +1,32 @@
 package main
 
 import (
-	"fmt"
 	"fun/lexer"
 	"fun/parser"
 	"fun/vm"
 )
 
 const code = `
-def fibonaci (n){
-    if  (n < 2){
-        1
-    }else{
-         (
-            fibonaci(n - 1)
-            +
-            fibonaci((n - 2))
-        )
-    }
+a := 1
+b := 2
+c := 3
+
+def double(n){
+    return n * 2
+    print('support return')
 }
 
+print(a * double(b) *c)
 
-print(now())
-
-times := 0
-
-while (times < 15) {
-    print(fibonaci(times))
-    times++
-}
-
-print(now())
-
+print('a'+'b')
 `
 
 func main() {
 	tokens := lexer.NewLexer().Tokenize(code)
 	ast := parser.NewParser().Parse(tokens)
 
-	resout, err := vm.NewVM().Call(ast)
-	if err != nil {
+	if _, err := vm.NewVM().Call(ast); err != nil {
 		panic(err)
 	}
-
-	fmt.Println(resout)
 
 }

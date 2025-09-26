@@ -105,8 +105,8 @@ func NewLexer() *Lexer {
 		{`^[\+\-\*\/]+`, OPERATOR, nil},
 		// 其他操作符
 		{`^[<>\.]`, OPERATOR, nil},
-		// 关键字（必须在标识符之前）
-		{`^(if|while|else|def)\b`, KEY, nil},
+		// 关键字（必须在标识符之前）- 添加了return
+		{`^(if|while|else|def|return)\b`, KEY, nil},
 		// 标识符
 		{`^[a-zA-Z_][a-zA-Z0-9_]*`, IDENTIFIER, nil},
 	}

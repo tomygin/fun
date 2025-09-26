@@ -1,8 +1,8 @@
 package vm
 
 import (
-	"maps"
 	"fmt"
+	"maps"
 	"reflect"
 	"strconv"
 )
@@ -43,6 +43,11 @@ func (env *Environment) Lookup(name string) (any, error) {
 func (env *Environment) Set(name string, value any) any {
 	env.local[name] = value
 	return value
+}
+
+func (env *Environment) Get(name string) any {
+	return env.local[name]
+
 }
 
 func (env *Environment) Assign(name string, value any) (any, error) {
@@ -249,26 +254,40 @@ func (vm *VM) Eval(exp any) (any, error) {
 			}
 			return result, nil
 		}
+		// 在 Eval 方法中，在 "Code block" 处理之前添加 return 处理：
+		// Return statement
+		if operator == "return" {
+			// 符号表里面添加标志
+			vm.env.Set("@ReturnFlag", true)
+
+			if len(expList) == 1 {
+				// return without value
+				return nil, nil
+			}
+
+			resout, err := vm.Eval(expList[1])
+			return resout, err
+
+		}
 
 		// Code block
 		if operator == "begin" {
 			vm.env = vm.env.Next(nil)
 			var result any
-			returnFlag := false
+			var err error
 
 			for _, block := range expList[1:] {
-				var err error
+
 				result, err = vm.Eval(block)
 				if err != nil {
 					vm.env = vm.env.Close()
 					return nil, err
 				}
-				if returnFlag {
+
+				if isReturn, ok := vm.env.Get("@ReturnFlag").(bool); ok && isReturn {
 					break
 				}
-				if result == "return" {
-					returnFlag = true
-				}
+
 			}
 			vm.env = vm.env.Close()
 			return result, nil
