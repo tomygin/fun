@@ -82,6 +82,7 @@ func (p *Parser) work() any {
 		if p.back().Value == "++" {
 			return p.selfAddSugar()
 		}
+
 		// 检查是否是表达式的一部分
 		return p.parseExpression()
 	case lexer.KEY:
@@ -90,10 +91,17 @@ func (p *Parser) work() any {
 			return p.whileStatement()
 		case "if":
 			return p.ifStatement()
-		case "def":
+		case "fun":
 			return p.defStatement()
 		case "return":
 			return p.returnStatement()
+		case "this":
+			{
+				result := p.current().Value
+				p.cursor++
+				return result
+			}
+
 		}
 	case lexer.BRACKETS:
 		if p.current().Value == "(" {
@@ -148,16 +156,54 @@ func (p *Parser) parseAddition() any {
 
 // parseMultiplication 解析乘除运算符
 func (p *Parser) parseMultiplication() any {
-	left := p.parsePrimary()
+	left := p.parsePropertyAccess()
 
 	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR {
 		op := p.current().Value
 		if op == "*" || op == "/" {
 			p.cursor++
-			right := p.parsePrimary()
+			right := p.parsePropertyAccess()
 			left = []any{p.convertOperator(op), left, right}
 		} else {
 			break
+		}
+	}
+
+	return left
+}
+
+// parsePropertyAccess 解析属性访问 (obj.property)
+func (p *Parser) parsePropertyAccess() any {
+	left := p.parsePrimary()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "." {
+		p.cursor++ // 跳过 '.'
+
+		if p.current().Type != lexer.IDENTIFIER {
+			panic("expected identifier after '.'")
+		}
+
+		property := p.current().Value
+		p.cursor++
+
+		// 检查是否是方法调用
+		if p.cursor < len(p.tokens) && p.current().Value == "(" {
+			p.cursor++ // 跳过 '('
+
+			// 解析参数
+			var args []any
+			for p.current().Value != ")" {
+				args = append(args, p.parseExpression())
+			}
+			p.cursor++ // 跳过 ')'
+
+			// 返回方法调用节点 ["method-call", object, method_name, ...args]
+			methodCall := []any{"method-call", left, property}
+			methodCall = append(methodCall, args...)
+			left = methodCall
+		} else {
+			// 属性访问 ["property", object, property_name]
+			left = []any{"property", left, property}
 		}
 	}
 
@@ -180,6 +226,12 @@ func (p *Parser) parsePrimary() any {
 		}
 		// 变量
 		return p.varSelf()
+	case lexer.KEY:
+		if p.current().Value == "this" {
+			result := p.current().Value
+			p.cursor++
+			return result
+		}
 	case lexer.BRACKETS:
 		if p.current().Value == "(" {
 			return p.expressionSugar()
@@ -353,12 +405,12 @@ func (p *Parser) defStatement() []any {
 	p.cursor++
 
 	if p.current().Type != lexer.IDENTIFIER {
-		panic("def statement name must be identifier")
+		panic("fun statement name must be identifier")
 	}
 
 	name := p.current().Value
 	if p.back().Value != "(" {
-		panic("def statement must be '('")
+		panic("fun statement must be '('")
 	}
 
 	p.cursor += 2
@@ -366,14 +418,14 @@ func (p *Parser) defStatement() []any {
 
 	for p.current().Value != ")" {
 		if p.current().Type != lexer.IDENTIFIER {
-			panic("def statement arg must be identifier")
+			panic("fun statement arg must be identifier")
 		}
 		args = append(args, p.current().Value)
 		p.cursor++
 	}
 
 	if p.back().Value != "{" {
-		panic("def statement must be '{'")
+		panic("fun statement must be '{'")
 	}
 
 	p.cursor += 2
@@ -383,7 +435,7 @@ func (p *Parser) defStatement() []any {
 	}
 	p.cursor++
 
-	return []any{"def", name, args, body}
+	return []any{"fun", name, args, body}
 }
 
 // returnStatement 处理 return 语句

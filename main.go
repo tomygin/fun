@@ -8,17 +8,27 @@ import (
 
 const code = `
 a := 1
-b := 2
-c := 3
 
-def double(n){
-    return n * 2
-    print('support return')
+fun class(n){
+	fun say(m){
+		print(m)
+	}
+		fun init(){
+			print(n)
+		}
+	
+	return this
 }
 
-print(a * double(b) *c)
+b := class(a)
+b.say(2233)
+b.init()
 
-print('a'+'b')
+that := this
+
+print(that.a)
+
+
 `
 
 func main() {

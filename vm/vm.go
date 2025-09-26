@@ -47,7 +47,6 @@ func (env *Environment) Set(name string, value any) any {
 
 func (env *Environment) Get(name string) any {
 	return env.local[name]
-
 }
 
 func (env *Environment) Assign(name string, value any) (any, error) {
@@ -107,8 +106,8 @@ func isVar(exp any) bool {
 	if _, ok := exp.([]any); ok {
 		return false
 	}
-	if _, ok := exp.(string); ok {
-		return !isString(exp)
+	if str, ok := exp.(string); ok {
+		return !isString(str) && str != "this"
 	}
 	return false
 }
@@ -204,6 +203,13 @@ func (vm *VM) Eval(exp any) (any, error) {
 		return exp, nil
 	}
 
+	// this keyword - 返回当前环境的所有本地变量
+	if exp == "this" {
+		thisObj := make(map[string]any)
+		maps.Copy(thisObj, vm.env.local)
+		return thisObj, nil
+	}
+
 	// Variables
 	if isVar(exp) {
 		name := exp.(string)
@@ -224,6 +230,104 @@ func (vm *VM) Eval(exp any) (any, error) {
 		}
 
 		operator := expList[0].(string)
+
+		// Property access
+		if operator == "property" {
+			if len(expList) != 3 {
+				return nil, fmt.Errorf("property requires exactly 2 arguments")
+			}
+
+			obj, err := vm.Eval(expList[1])
+			if err != nil {
+				return nil, err
+			}
+
+			propertyName := expList[2].(string)
+
+			if objMap, ok := obj.(map[string]any); ok {
+				if value, exists := objMap[propertyName]; exists {
+					return value, nil
+				}
+				return nil, fmt.Errorf("property '%s' not found", propertyName)
+			}
+
+			return nil, fmt.Errorf("cannot access property on non-object")
+		}
+
+		// Method call
+		if operator == "method-call" {
+			if len(expList) < 3 {
+				return nil, fmt.Errorf("method-call requires at least 2 arguments")
+			}
+
+			obj, err := vm.Eval(expList[1])
+			if err != nil {
+				return nil, err
+			}
+
+			methodName := expList[2].(string)
+
+			// Evaluate arguments
+			var args []any
+			for _, arg := range expList[3:] {
+				evalArg, err := vm.Eval(arg)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, evalArg)
+			}
+
+			if objMap, ok := obj.(map[string]any); ok {
+				if method, exists := objMap[methodName]; exists {
+					// 如果是用户定义的函数
+					if methodMap, ok := method.(map[string]any); ok {
+						params := methodMap["params"].([]any)
+						body := methodMap["body"]
+
+						// 创建新的环境，绑定参数
+						kv := make(map[string]any)
+						for i, param := range params {
+							if i < len(args) {
+								kv[param.(string)] = args[i]
+							}
+						}
+
+						// 如果函数有闭包环境，则使用闭包环境作为父环境
+						var parentEnv *Environment
+						if closureEnv, exists := methodMap["@ClosureEnv"]; exists {
+							parentEnv = closureEnv.(*Environment)
+						} else {
+							parentEnv = vm.env
+						}
+
+						// 创建新环境并执行
+						oldEnv := vm.env
+						vm.env = NewEnvironment(kv, parentEnv)
+
+						result, err := vm.Eval(body)
+						vm.env = oldEnv
+						return result, err
+					}
+
+					// 如果是内置函数
+					if reflect.TypeOf(method).Kind() == reflect.Func {
+						fnReflect := reflect.ValueOf(method)
+						var reflectArgs []reflect.Value
+						for _, arg := range args {
+							reflectArgs = append(reflectArgs, reflect.ValueOf(arg))
+						}
+						results := fnReflect.Call(reflectArgs)
+						if len(results) > 0 {
+							return results[0].Interface(), nil
+						}
+						return nil, nil
+					}
+				}
+				return nil, fmt.Errorf("method '%s' not found", methodName)
+			}
+
+			return nil, fmt.Errorf("cannot call method on non-object")
+		}
 
 		// Variable definition
 		if operator == "var" {
@@ -254,7 +358,7 @@ func (vm *VM) Eval(exp any) (any, error) {
 			}
 			return result, nil
 		}
-		// 在 Eval 方法中，在 "Code block" 处理之前添加 return 处理：
+
 		// Return statement
 		if operator == "return" {
 			// 符号表里面添加标志
@@ -267,7 +371,6 @@ func (vm *VM) Eval(exp any) (any, error) {
 
 			resout, err := vm.Eval(expList[1])
 			return resout, err
-
 		}
 
 		// Code block
@@ -277,7 +380,6 @@ func (vm *VM) Eval(exp any) (any, error) {
 			var err error
 
 			for _, block := range expList[1:] {
-
 				result, err = vm.Eval(block)
 				if err != nil {
 					vm.env = vm.env.Close()
@@ -287,7 +389,6 @@ func (vm *VM) Eval(exp any) (any, error) {
 				if isReturn, ok := vm.env.Get("@ReturnFlag").(bool); ok && isReturn {
 					break
 				}
-
 			}
 			vm.env = vm.env.Close()
 			return result, nil
@@ -334,17 +435,18 @@ func (vm *VM) Eval(exp any) (any, error) {
 		}
 
 		// Function definition
-		if operator == "def" {
+		if operator == "fun" {
 			if len(expList) != 4 {
-				return nil, fmt.Errorf("def requires exactly 3 arguments")
+				return nil, fmt.Errorf("fun requires exactly 3 arguments")
 			}
 			name := expList[1].(string)
 			params := expList[2].([]any)
 			body := expList[3]
 
 			fn := map[string]any{
-				"params": params,
-				"body":   body,
+				"params":      params,
+				"body":        body,
+				"@ClosureEnv": vm.env.Clone(), // 保存定义时的环境副本作为闭包
 			}
 			return vm.env.Set(name, fn), nil
 		}
@@ -393,9 +495,20 @@ func (vm *VM) Eval(exp any) (any, error) {
 				}
 			}
 
-			vm.env = vm.env.Next(kv)
+			// 如果函数有闭包环境，则使用闭包环境作为父环境
+			var parentEnv *Environment
+			if closureEnv, exists := fnMap["@ClosureEnv"]; exists {
+				parentEnv = closureEnv.(*Environment)
+			} else {
+				parentEnv = vm.env
+			}
+
+			// 创建新环境并执行函数
+			oldEnv := vm.env
+			vm.env = NewEnvironment(kv, parentEnv)
 			result, err := vm.Eval(body)
-			vm.env = vm.env.Close()
+			vm.env = oldEnv
+
 			return result, err
 		}
 

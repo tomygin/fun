@@ -1,4 +1,4 @@
-def fibonaci (n){
+fun fibonaci (n){
     if  (n < 2){
         1
     }else{
