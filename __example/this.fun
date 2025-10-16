@@ -1,10 +1,11 @@
 fun Person(name){
-    that = this
     fun Say(what){
-        print(that.name,"say",what)
+        print(name," ","say"," ",what)
     }
     return this
 }
 
-p = Person('Gin')
+p := Person('Gin')
 p.Say('Good!')
+
+print(VERSION)

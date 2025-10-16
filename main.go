@@ -1,38 +1,26 @@
 package main
 
 import (
+	"fmt"
 	"fun/lexer"
 	"fun/parser"
 	"fun/vm"
+	"os"
 )
 
-const code = `
-a := 1
-
-fun class(n){
-	fun say(m){
-		print(m)
-	}
-		fun init(){
-			print(n)
-		}
-	
-	return this
-}
-
-b := class(a)
-b.say(2233)
-b.init()
-
-that := this
-
-print(that.a)
-
-
-`
-
 func main() {
-	tokens := lexer.NewLexer().Tokenize(code)
+
+	if len(os.Args) < 2 {
+		fmt.Println("have fun")
+		return
+	}
+
+	source, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		panic(err)
+	}
+
+	tokens := lexer.NewLexer().Tokenize(string(source))
 	ast := parser.NewParser().Parse(tokens)
 
 	if _, err := vm.NewVM().Call(ast); err != nil {
