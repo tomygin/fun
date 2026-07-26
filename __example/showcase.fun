@@ -20,19 +20,19 @@ print("hello, " + name)       // 字符串拼接
 
 print("========== 2. 布尔 / nil / 逻辑 ==========")
 
-print("true and false = ", true and false)
-print("true or  false = ", true or false)
-print("not true       = ", not true)
-print("nil            = ", nil)
+print("true && false = ", true && false)
+print("true || false = ", true || false)
+print("!true         = ", !true)
+print("nil           = ", nil)
 
 nothing := nil
 if nothing == nil {
     print("nothing 确实是 nil")
 }
 
-// and / or 会短路并返回决定结果的操作数（借鉴 python）
+// && / || 会短路并返回决定结果的操作数（借鉴 python）
 port := 0
-print("port or 8080 = ", port or 8080)
+print("port || 8080 = ", port || 8080)
 
 print("========== 3. 分支：if / else if / else ==========")
 
@@ -53,15 +53,21 @@ print("83 -> ", grade(83))
 print("61 -> ", grade(61))
 print("40 -> ", grade(40))
 
-print("========== 4. 循环：while ==========")
+print("========== 4. 循环：for ==========")
 
+// 三段式 for（go 风格）
 sum := 0
-i := 1
-while i <= 100 {
+for i := 1; i <= 100; i++ {
     sum = sum + i
-    i++
 }
 print("1 + 2 + ... + 100 = ", sum)
+
+// 条件式 for（相当于其他语言的 while）
+n := 1
+for n < 1000 {
+    n = n * 2
+}
+print("第一个 >= 1000 的 2 的幂 = ", n)
 
 print("========== 5. 函数与递归 ==========")
 
@@ -125,21 +131,17 @@ user["city"] = "Hangzhou"
 print("修改后: ", user)
 
 // 7.2 当作数组（用数字下标）
-fun makeRange(n) {
+fun makeSquares(n) {
     arr := {}
-    i := 0
-    while i < n {
+    for i := 0; i < n; i++ {
         arr[i] = i * i
-        i++
     }
     return arr
 }
-squares := makeRange(6)
+squares := makeSquares(6)
 print("squares 长度 = ", len(squares))
-j := 0
-while j < len(squares) {
+for j := 0; j < len(squares); j++ {
     print("  squares[", j, "] = ", squares[j])
-    j++
 }
 
 print("========== 8. 内置函数 ==========")
@@ -159,11 +161,9 @@ print("VERSION           = ", VERSION)
 // keys + len 遍历一张表
 print("遍历 user 的字段：")
 ks := keys(user)
-k := 0
-while k < len(ks) {
+for k := 0; k < len(ks); k++ {
     field := ks[k]
     print("  ", field, " = ", user[field])
-    k++
 }
 
 // assert 断言

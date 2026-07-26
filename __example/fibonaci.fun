@@ -8,9 +8,7 @@ fun fib(n) {
     return fib(n - 1) + fib(n - 2)
 }
 
-// 打印前 10 项
-i := 0
-while i < 10 {
+// 打印前 10 项（go 风格的三段式 for）
+for i := 0; i < 10; i++ {
     print("fib(", i, ") = ", fib(i))
-    i++
 }

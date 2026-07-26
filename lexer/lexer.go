@@ -92,22 +92,24 @@ func NewLexer() *Lexer {
 		{`^\s+`, BLANK, nil},
 		// 逗号（参数/元素分隔符，作为独立 token 以消除歧义）
 		{`^,`, OPERATOR, nil},
+		// 分号（三段式 for 的子句分隔符）
+		{`^;`, OPERATOR, nil},
 		// 字符串（单引号）
 		{`^'.*?'`, STRING, nil},
 		// 字符串（双引号）
 		{`^".*?"`, STRING, nil},
-		// 比较操作符（必须在单个字符操作符之前）
-		{`^(>=|<=|!=|==)`, OPERATOR, nil},
+		// 比较与逻辑操作符（必须在单个字符操作符之前，!= 要在 ! 之前）
+		{`^(>=|<=|!=|==|&&|\|\|)`, OPERATOR, nil},
 		// 赋值操作符（必须在冒号之前）
 		{`^:?=`, OPERATOR, nil},
 		// 冒号（表字面量的键值分隔符）
 		{`^:`, OPERATOR, nil},
 		// 算术操作符（含取模）
 		{`^[\+\-\*\/%]+`, OPERATOR, nil},
-		// 其他操作符
-		{`^[<>\.]`, OPERATOR, nil},
+		// 其他操作符（含逻辑非 !）
+		{`^[<>\.!]`, OPERATOR, nil},
 		// 关键字（必须在标识符之前）
-		{`^(if|while|else|fun|return|this|true|false|nil|and|or|not)\b`, KEY, nil},
+		{`^(if|for|else|fun|return|this|true|false|nil)\b`, KEY, nil},
 		// 标识符
 		{`^[a-zA-Z_][a-zA-Z0-9_]*`, IDENTIFIER, nil},
 	}

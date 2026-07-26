@@ -45,14 +45,17 @@ func TestComparisonMixedNumbers(t *testing.T) {
 }
 
 func TestLogical(t *testing.T) {
-	if got := run(t, `true and false`); got != false {
-		t.Errorf("true and false = %v", got)
+	if got := run(t, `true && false`); got != false {
+		t.Errorf("true && false = %v", got)
 	}
-	if got := run(t, `false or 42`); got != 42 {
-		t.Errorf("false or 42 = %v, want 42", got)
+	if got := run(t, `false || 42`); got != 42 {
+		t.Errorf("false || 42 = %v, want 42", got)
 	}
-	if got := run(t, `not nil`); got != true {
-		t.Errorf("not nil = %v, want true", got)
+	if got := run(t, `!nil`); got != true {
+		t.Errorf("!nil = %v, want true", got)
+	}
+	if got := run(t, `!(1 > 2) && 2 < 3`); got != true {
+		t.Errorf("!(1 > 2) && 2 < 3 = %v, want true", got)
 	}
 }
 
@@ -124,14 +127,51 @@ func TestTableMutation(t *testing.T) {
 func TestTableAsArray(t *testing.T) {
 	code := `
 	arr := {}
-	i := 0
-	while i < 5 {
+	for i := 0; i < 5; i++ {
 		arr[i] = i * i
-		i++
 	}
 	arr[4]`
 	if got := run(t, code); got != 16.0 {
 		t.Errorf("arr[4] = %v, want 16", got)
+	}
+}
+
+func TestForConditionForm(t *testing.T) {
+	code := `
+	n := 1
+	for n < 100 {
+		n = n * 2
+	}
+	n`
+	if got := run(t, code); got != 128.0 {
+		t.Errorf("for-cond result = %v, want 128", got)
+	}
+}
+
+func TestForThreeClause(t *testing.T) {
+	code := `
+	sum := 0
+	for i := 1; i <= 100; i++ {
+		sum = sum + i
+	}
+	sum`
+	if got := run(t, code); got != 5050.0 {
+		t.Errorf("sum 1..100 = %v, want 5050", got)
+	}
+}
+
+func TestForInfiniteWithReturn(t *testing.T) {
+	code := `
+	fun countTo(k) {
+		c := 0
+		for {
+			c++
+			if c == k { return c }
+		}
+	}
+	countTo(7)`
+	if got := run(t, code); got != 7.0 {
+		t.Errorf("countTo(7) = %v, want 7", got)
 	}
 }
 

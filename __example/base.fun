@@ -3,10 +3,10 @@
 
 a := 1
 b := 2.1
-while a < 10 {
+for a < 10 {
 
     a++
-    
+
 }
 
 // TODO:比较int

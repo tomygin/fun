@@ -76,8 +76,8 @@ func (p *Parser) work() any {
 		return p.parseExpression()
 	case lexer.KEY:
 		switch p.current().Value {
-		case "while":
-			return p.whileStatement()
+		case "for":
+			return p.forStatement()
 		case "if":
 			return p.ifStatement()
 		case "fun":
@@ -99,11 +99,11 @@ func (p *Parser) parseExpression() any {
 	return p.parseLogicalOr()
 }
 
-// parseLogicalOr 解析逻辑或 (or)，短路由 VM 处理
+// parseLogicalOr 解析逻辑或 (||)，短路由 VM 处理
 func (p *Parser) parseLogicalOr() any {
 	left := p.parseLogicalAnd()
 
-	for p.cursor < len(p.tokens) && p.current().Type == lexer.KEY && p.current().Value == "or" {
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "||" {
 		p.cursor++
 		right := p.parseLogicalAnd()
 		left = []any{"or", left, right}
@@ -112,11 +112,11 @@ func (p *Parser) parseLogicalOr() any {
 	return left
 }
 
-// parseLogicalAnd 解析逻辑与 (and)，短路由 VM 处理
+// parseLogicalAnd 解析逻辑与 (&&)，短路由 VM 处理
 func (p *Parser) parseLogicalAnd() any {
 	left := p.parseComparison()
 
-	for p.cursor < len(p.tokens) && p.current().Type == lexer.KEY && p.current().Value == "and" {
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "&&" {
 		p.cursor++
 		right := p.parseComparison()
 		left = []any{"and", left, right}
@@ -193,7 +193,7 @@ func (p *Parser) parseUnary() any {
 		return operand
 	}
 
-	if cur.Type == lexer.KEY && cur.Value == "not" {
+	if cur.Type == lexer.OPERATOR && cur.Value == "!" {
 		p.cursor++
 		return []any{"not", p.parseUnary()}
 	}
@@ -488,21 +488,87 @@ func (p *Parser) varCall() []any {
 	return args
 }
 
-// whileStatement while循环
-func (p *Parser) whileStatement() []any {
-	p.cursor++
-	condition := p.parseExpression()
-
+// parseBlock 解析 { ... } 语句块，返回 ["begin", ...]
+func (p *Parser) parseBlock() []any {
 	if p.current().Value != "{" {
-		panic("while loop must be '{'")
+		panic("expected '{' to start a block")
 	}
-
 	p.cursor++
 	body := []any{"begin"}
 	for p.current().Value != "}" {
 		body = append(body, p.work())
 	}
 	p.cursor++
+	return body
+}
+
+// hasSemicolonBeforeBlock 向前扫描，判断循环体 '{' 之前是否有分号，
+// 用来区分三段式 for 和条件式 for
+func (p *Parser) hasSemicolonBeforeBlock() bool {
+	depth := 0
+	for i := p.cursor; i < len(p.tokens); i++ {
+		if p.tokens[i].Type == lexer.EOF {
+			break
+		}
+		switch p.tokens[i].Value {
+		case "(", "[":
+			depth++
+		case ")", "]":
+			depth--
+		case "{":
+			if depth == 0 {
+				return false // 到达循环体
+			}
+		case ";":
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// forStatement for 循环（借鉴 go：唯一的循环关键字，三种形式）
+//
+//	for { ... }                    无限循环
+//	for cond { ... }               条件循环
+//	for init; cond; post { ... }   三段式
+func (p *Parser) forStatement() []any {
+	p.cursor++ // 跳过 'for'
+
+	// for { }  无限循环
+	if p.current().Value == "{" {
+		body := p.parseBlock()
+		return []any{"while", true, body}
+	}
+
+	// for init; cond; post { }  三段式
+	if p.hasSemicolonBeforeBlock() {
+		init := p.work()
+		if p.current().Value != ";" {
+			panic("for: expected ';' after init clause")
+		}
+		p.cursor++
+
+		condition := p.parseExpression()
+		if p.current().Value != ";" {
+			panic("for: expected ';' after condition")
+		}
+		p.cursor++
+
+		post := p.work()
+		body := p.parseBlock()
+
+		// 脱糖为： { init; while cond { body...; post } }
+		loopBody := make([]any, len(body))
+		copy(loopBody, body)
+		loopBody = append(loopBody, post)
+		return []any{"begin", init, []any{"while", condition, loopBody}}
+	}
+
+	// for cond { }  条件循环
+	condition := p.parseExpression()
+	body := p.parseBlock()
 	return []any{"while", condition, body}
 }
 
