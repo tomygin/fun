@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // ----------------------------------------------------------------------------
@@ -65,9 +66,11 @@ func (env *Environment) Clone() *Environment {
 	return NewEnvironment(newLocal, env.parent)
 }
 
+// Next 进入子作用域：直接以当前环境为父，零拷贝。
+// （旧实现每进一个块都要 Clone 整个 local map，是最大的性能黑洞；
+// 直接引用父环境同时让赋值/闭包获得标准的词法作用域语义。）
 func (env *Environment) Next(local map[string]any) *Environment {
-	cloned := env.Clone()
-	return NewEnvironment(local, cloned)
+	return NewEnvironment(local, env)
 }
 
 func (env *Environment) Close() *Environment {
@@ -85,10 +88,50 @@ func isString(exp any) bool {
 	if str, ok := exp.(string); ok {
 		if len(str) >= 2 {
 			return (str[0] == '"' && str[len(str)-1] == '"') ||
-				(str[0] == '\'' && str[len(str)-1] == '\'')
+				(str[0] == '\'' && str[len(str)-1] == '\'') ||
+				(str[0] == '`' && str[len(str)-1] == '`')
 		}
 	}
 	return false
+}
+
+// unescapeString 处理单/双引号字符串里的转义序列
+// 支持：\n \t \r \\ \" \' \` \0；未知转义原样保留反斜杠
+func unescapeString(s string) string {
+	if !strings.ContainsRune(s, '\\') {
+		return s // 快速路径：没有转义
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+			switch s[i] {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+				b.WriteByte('\r')
+			case '\\':
+				b.WriteByte('\\')
+			case '"':
+				b.WriteByte('"')
+			case '\'':
+				b.WriteByte('\'')
+			case '`':
+				b.WriteByte('`')
+			case '0':
+				b.WriteByte(0)
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(s[i])
+			}
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 func isNumber(exp any) bool {
@@ -244,7 +287,12 @@ func (vm *VM) Eval(exp any) (any, error) {
 	// String literals
 	if isString(exp) {
 		str := exp.(string)
-		return str[1 : len(str)-1], nil
+		inner := str[1 : len(str)-1]
+		if str[0] == '`' {
+			// 模板字符串：原样保留（不处理转义），但求值 ${表达式} 插值
+			return vm.interpolate(inner)
+		}
+		return unescapeString(inner), nil
 	}
 
 	// Numbers
@@ -293,6 +341,13 @@ func (vm *VM) Eval(exp any) (any, error) {
 		}
 
 		operator := expList[0].(string)
+
+		// 快速路径：@ 开头的都是运算符/函数调用（+ - * / 等的实现），
+		// 跳过下面所有语句关键字匹配。Lookup 沿环境链查找，
+		// 所以局部定义的 @add 等会覆盖内置实现 —— 这就是元编程入口。
+		if len(operator) > 0 && operator[0] == '@' {
+			return vm.evalCall(operator, expList)
+		}
 
 		// nil literal 节点
 		if operator == "nil" {
@@ -443,49 +498,8 @@ func (vm *VM) Eval(exp any) (any, error) {
 
 			if objMap, ok := obj.(map[string]any); ok {
 				if method, exists := objMap[methodName]; exists {
-					// 如果是用户定义的函数
-					if methodMap, ok := method.(map[string]any); ok {
-						params := methodMap["params"].([]any)
-						body := methodMap["body"]
-
-						// 创建新的环境，绑定参数
-						kv := make(map[string]any)
-						for i, param := range params {
-							if i < len(args) {
-								kv[param.(string)] = args[i]
-							}
-						}
-						// 绑定接收者：方法内用 this 就能访问被调用的这张表本身
-						// （这样表里的函数就是真正的"方法"，可读写 this.field）
-						kv["@self"] = objMap
-
-						// 如果函数有闭包环境，则使用闭包环境作为父环境
-						var parentEnv *Environment
-						if closureEnv, exists := methodMap["@ClosureEnv"]; exists {
-							parentEnv = closureEnv.(*Environment)
-						} else {
-							parentEnv = vm.env
-						}
-
-						// 创建新环境并执行
-						oldEnv := vm.env
-						vm.env = NewEnvironment(kv, parentEnv)
-
-						result, err := vm.Eval(body)
-						vm.env = oldEnv
-						vm.returning = false // 消费 return 信号，函数边界到此为止
-						return result, err
-					}
-
-					// 如果是内置函数
-					if reflect.TypeOf(method).Kind() == reflect.Func {
-						fnReflect := reflect.ValueOf(method)
-						results := fnReflect.Call(buildReflectArgs(args))
-						if len(results) > 0 {
-							return results[0].Interface(), nil
-						}
-						return nil, nil
-					}
+					// 绑定接收者后调用：方法内用 this 即可访问这张表本身
+					return vm.applyFunctionSelf(method, args, objMap)
 				}
 				return nil, fmt.Errorf("method '%s' not found", methodName)
 			}
@@ -706,78 +720,44 @@ func (vm *VM) Eval(exp any) (any, error) {
 		}
 
 		// Function call
-		fnValue, err := vm.env.Lookup(operator)
-		if err != nil {
-			return nil, err
-		}
-
-		// Evaluate arguments
-		var args []any
-		for _, arg := range expList[1:] {
-			evalArg, err := vm.Eval(arg)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, evalArg)
-		}
-
-		// Built-in function
-		if reflect.TypeOf(fnValue).Kind() == reflect.Func {
-			fnReflect := reflect.ValueOf(fnValue)
-			results := fnReflect.Call(buildReflectArgs(args))
-			if len(results) > 0 {
-				return results[0].Interface(), nil
-			}
-			return nil, nil
-		}
-
-		// User-defined function
-		if isDict(fnValue) {
-			fnMap := fnValue.(map[string]any)
-			params := fnMap["params"].([]any)
-			body := fnMap["body"]
-
-			// Create parameter bindings
-			kv := make(map[string]any)
-			for i, param := range params {
-				if i < len(args) {
-					kv[param.(string)] = args[i]
-				}
-			}
-
-			// 如果函数有闭包环境，则使用闭包环境作为父环境
-			var parentEnv *Environment
-			if closureEnv, exists := fnMap["@ClosureEnv"]; exists {
-				parentEnv = closureEnv.(*Environment)
-			} else {
-				parentEnv = vm.env
-			}
-
-			// 创建新环境并执行函数
-			oldEnv := vm.env
-			vm.env = NewEnvironment(kv, parentEnv)
-			result, err := vm.Eval(body)
-			vm.env = oldEnv
-			vm.returning = false // 消费 return 信号，函数边界到此为止
-
-			return result, err
-		}
-
-		return nil, fmt.Errorf("unknown function: %s", operator)
+		return vm.evalCall(operator, expList)
 	}
 
 	return nil, fmt.Errorf("unknown expression: %v", exp)
 }
 
+// evalCall 按名字查找函数并用求值后的实参调用
+func (vm *VM) evalCall(operator string, expList []any) (any, error) {
+	fnValue, err := vm.env.Lookup(operator)
+	if err != nil {
+		return nil, err
+	}
+
+	var args []any
+	if len(expList) > 1 {
+		args = make([]any, 0, len(expList)-1)
+	}
+	for _, arg := range expList[1:] {
+		evalArg, err := vm.Eval(arg)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, evalArg)
+	}
+
+	return vm.applyFunction(fnValue, args)
+}
+
 // applyFunction 用已求值的参数调用一个函数值（内置 Go 函数或用户函数）
 func (vm *VM) applyFunction(fnValue any, args []any) (any, error) {
-	// 内置函数
-	if fnValue != nil && reflect.TypeOf(fnValue).Kind() == reflect.Func {
-		results := reflect.ValueOf(fnValue).Call(buildReflectArgs(args))
-		if len(results) > 0 {
-			return results[0].Interface(), nil
-		}
-		return nil, nil
+	return vm.applyFunctionSelf(fnValue, args, nil)
+}
+
+// applyFunctionSelf 同 applyFunction，若 self 非空则把它绑定为 this 接收者
+func (vm *VM) applyFunctionSelf(fnValue any, args []any, self map[string]any) (any, error) {
+	// 内置函数快速路径：直接类型断言调用，绕开 reflect（快一个数量级）
+	if f, ok := fnValue.(func(...any) any); ok {
+		return f(args...), nil
 	}
 
 	// 用户定义函数（表形式）
@@ -785,11 +765,14 @@ func (vm *VM) applyFunction(fnValue any, args []any) (any, error) {
 		params, _ := fnMap["params"].([]any)
 		body := fnMap["body"]
 
-		kv := make(map[string]any)
+		kv := make(map[string]any, len(params)+1)
 		for i, param := range params {
 			if i < len(args) {
 				kv[param.(string)] = args[i]
 			}
+		}
+		if self != nil {
+			kv["@self"] = self
 		}
 
 		parentEnv := vm.env
@@ -803,6 +786,15 @@ func (vm *VM) applyFunction(fnValue any, args []any) (any, error) {
 		vm.env = oldEnv
 		vm.returning = false // 消费 return 信号，函数边界到此为止
 		return result, err
+	}
+
+	// 其它签名的 Go 函数走 reflect 兜底
+	if fnValue != nil && reflect.TypeOf(fnValue).Kind() == reflect.Func {
+		results := reflect.ValueOf(fnValue).Call(buildReflectArgs(args))
+		if len(results) > 0 {
+			return results[0].Interface(), nil
+		}
+		return nil, nil
 	}
 
 	return nil, fmt.Errorf("value of type %s is not callable", typeName(fnValue))

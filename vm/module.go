@@ -21,6 +21,50 @@ import (
 //   - 模块按绝对路径缓存，重复 import 只求值一次，也能容忍循环导入。
 // ----------------------------------------------------------------------------
 
+// interpolate 求值模板字符串里的 ${表达式} 插值。
+// 实现是纯组合：把 ${} 里的文本重新走一遍 词法 -> 语法 -> 求值，
+// 在当前环境里执行，所以能引用当前作用域的任何变量 / 调任何函数。
+func (vm *VM) interpolate(s string) (string, error) {
+	if !strings.Contains(s, "${") {
+		return s, nil // 快速路径：没有插值
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '$' && i+1 < len(s) && s[i+1] == '{' {
+			// 找到配对的 }（支持内层嵌套 { }，比如表字面量）
+			depth := 1
+			j := i + 2
+			for j < len(s) && depth > 0 {
+				switch s[j] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+				j++
+			}
+			if depth != 0 {
+				return "", fmt.Errorf("template string: unclosed ${")
+			}
+			exprSrc := s[i+2 : j-1]
+
+			tokens := lexer.NewLexer().Tokenize(exprSrc)
+			ast := parser.NewParser().Parse(tokens)
+			value, err := vm.Eval(ast)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(formatValue(value))
+			i = j
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String(), nil
+}
+
 // importModule 加载并求值一个模块文件，返回它导出的表。
 func (vm *VM) importModule(path string) (any, error) {
 	// 补全默认扩展名 .fun

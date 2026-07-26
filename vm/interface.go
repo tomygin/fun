@@ -338,6 +338,8 @@ var interfaceFunctions = map[string]any{
 		return args[0]
 	},
 	// merge 把后面各表的键依次覆盖进第一张表，返回第一张表。
+	// 优先级：越靠后的表优先级越高 —— merge(a, b, c) 中
+	// c 覆盖 b，b 覆盖 a，同名键以最后出现的为准。
 	// 面向对象的"继承 / mixin"：merge(clone(父类), { 子类字段... })
 	"merge": func(args ...any) any {
 		if len(args) < 1 {
