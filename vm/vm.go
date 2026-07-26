@@ -200,11 +200,30 @@ type VM struct {
 	// returning 是函数返回信号：一旦 return 被求值就置为 true，
 	// begin/while 会立即停止执行并向上冒泡，直到函数调用处消费它。
 	returning bool
+
+	// global 是最外层内置函数环境，import 进来的模块以它为根。
+	global *Environment
+	// dir 是当前正在执行的文件所在目录，import 的相对路径以它为基准。
+	dir string
+	// modules 是模块缓存，键为文件绝对路径，避免重复求值与循环导入。
+	modules map[string]any
+	// current 指向当前正在运行的协程（yield 用它找到对应的通道）。
+	current *Coroutine
 }
 
 func NewVM() *VM {
 	env := NewEnvironment(interfaceFunctions, nil)
-	return &VM{env: env}
+	return &VM{
+		env:     env,
+		global:  env,
+		dir:     ".",
+		modules: make(map[string]any),
+	}
+}
+
+// SetDir 设置入口文件所在目录，作为 import 相对路径的基准。
+func (vm *VM) SetDir(dir string) {
+	vm.dir = dir
 }
 
 func (vm *VM) Call(exp any) (any, error) {
@@ -631,6 +650,42 @@ func (vm *VM) Eval(exp any) (any, error) {
 				"@ClosureEnv": vm.env,
 			}
 			return fn, nil
+		}
+
+		// import：把一个 .fun 文件当作模块加载，返回它导出的表
+		if operator == "import" {
+			if len(expList) != 2 {
+				return nil, fmt.Errorf("import requires exactly 1 argument")
+			}
+			path, err := vm.Eval(expList[1])
+			if err != nil {
+				return nil, err
+			}
+			pathStr, ok := path.(string)
+			if !ok {
+				return nil, fmt.Errorf("import path must be a string")
+			}
+			return vm.importModule(pathStr)
+		}
+
+		// 协程原语（基于宿主 goroutine 实现，协作式切换）
+		if operator == "coroutine" || operator == "resume" || operator == "yield" {
+			var args []any
+			for _, arg := range expList[1:] {
+				evalArg, err := vm.Eval(arg)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, evalArg)
+			}
+			switch operator {
+			case "coroutine":
+				return vm.coroutineCreate(args)
+			case "resume":
+				return vm.coroutineResume(args)
+			default: // yield
+				return vm.coroutineYield(args)
+			}
 		}
 
 		// Function call

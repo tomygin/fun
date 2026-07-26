@@ -31,6 +31,8 @@ func formatValue(value any) string {
 		return "false"
 	case string:
 		return v
+	case *Coroutine:
+		return "<coroutine>"
 	case float64:
 		// 整数值的浮点数去掉小数点，1.0 -> 1
 		if v == math.Trunc(v) && !math.IsInf(v, 0) {
@@ -96,6 +98,8 @@ func typeName(value any) string {
 		return "bool"
 	case string:
 		return "string"
+	case *Coroutine:
+		return "coroutine"
 	case map[string]any:
 		if isUserFunc(value.(map[string]any)) {
 			return "function"
@@ -118,19 +122,19 @@ func typeName(value any) string {
 
 var interfaceFunctions = map[string]any{
 	"VERSION": "1.0.0",
-	"neq": func(args ...any) any {
+	"@neq": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
 		return !valuesEqual(args[0], args[1])
 	},
-	"eq": func(args ...any) any {
+	"@eq": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
 		return valuesEqual(args[0], args[1])
 	},
-	"gt": func(args ...any) any {
+	"@gt": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
@@ -141,7 +145,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return false
 	},
-	"gte": func(args ...any) any {
+	"@gte": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
@@ -152,7 +156,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return false
 	},
-	"lte": func(args ...any) any {
+	"@lte": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
@@ -163,7 +167,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return false
 	},
-	"lt": func(args ...any) any {
+	"@lt": func(args ...any) any {
 		if len(args) < 2 {
 			return false
 		}
@@ -174,7 +178,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return false
 	},
-	"add": func(args ...any) any {
+	"@add": func(args ...any) any {
 		if len(args) < 2 {
 			return 0.0
 		}
@@ -191,7 +195,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return 0.0
 	},
-	"sub": func(args ...any) any {
+	"@sub": func(args ...any) any {
 		if len(args) < 2 {
 			return 0.0
 		}
@@ -202,7 +206,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return 0.0
 	},
-	"mul": func(args ...any) any {
+	"@mul": func(args ...any) any {
 		if len(args) < 2 {
 			return 1.0
 		}
@@ -213,7 +217,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return 1.0
 	},
-	"div": func(args ...any) any {
+	"@div": func(args ...any) any {
 		if len(args) < 2 {
 			return 0.0
 		}
@@ -224,7 +228,7 @@ var interfaceFunctions = map[string]any{
 		}
 		return 0.0
 	},
-	"mod": func(args ...any) any {
+	"@mod": func(args ...any) any {
 		if len(args) < 2 {
 			return 0.0
 		}
@@ -366,6 +370,16 @@ var interfaceFunctions = map[string]any{
 			panic(msg)
 		}
 		return true
+	},
+	// costatus 返回协程状态："suspended" / "running" / "dead"
+	"costatus": func(args ...any) any {
+		if len(args) < 1 {
+			return "nil"
+		}
+		if co, ok := args[0].(*Coroutine); ok {
+			return co.status
+		}
+		return "nil"
 	},
 	// input 从标准输入读取一行（可带提示语）
 	"input": func(args ...any) any {

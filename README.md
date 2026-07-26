@@ -38,6 +38,10 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
   数组，也是函数容器和对象 —— 一种结构撑起全部。
 - **函数是一等公民**：支持匿名函数、闭包、递归、相互递归；把函数放进表
   就得到方法，方法里的 `this` 指向对象自身，读写字段即可实现 OOP。
+- **协程**：借鉴 lua 的 `coroutine` / `resume` / `yield`，可写生成器、
+  做协作式调度（基于宿主 goroutine，协作式切换）。
+- **多文件编程**：`import("x.fun")` 把一个文件当模块加载，模块就是一张
+  导出表 —— 隐式导出全部顶层名字，或用 `return { ... }` 显式导出。
 
 ## 运行
 
@@ -242,6 +246,63 @@ c.inc()
 print(c.value())           // 12
 ```
 
+### 协程
+
+借鉴 lua 的对称式协程：`coroutine` 创建、`resume` 恢复、`yield` 让出、
+`costatus` 查状态。任一时刻只有一方在跑（协作式，非并行）。
+
+```js
+fun gen() {
+    yield(1)
+    yield(2)
+    return 3          // 最后一次 resume 拿到返回值
+}
+co := coroutine(gen)
+print(resume(co))     // 1
+print(resume(co))     // 2
+print(costatus(co))   // suspended
+print(resume(co))     // 3
+print(costatus(co))   // dead
+```
+
+`yield` 是双向的：它送出的值给 `resume` 的返回值，而下一次 `resume` 的
+参数会成为 `yield` 的返回值，可用来做生成器、协作式调度等。（完整演示见
+[`__example/coroutine.fun`](__example/coroutine.fun)）
+
+### 多文件编程：包的导入 / 导出
+
+`import("x.fun")` 读取并求值一个文件，返回它的**导出表**。相对路径以
+当前文件所在目录为基准，扩展名 `.fun` 可省略，模块按绝对路径缓存。
+
+**模块就是一张表**，导出有两种方式：
+
+```js
+// ---- mathlib.fun （隐式导出：顶层所有名字都导出）----
+PI := 3.14159
+fun add(a, b) { return a + b }
+fun max(a, b) { if a > b { return a }  return b }
+```
+
+```js
+// ---- stack.fun （显式导出：return 决定暴露什么）----
+fun helper() { return "私有，不导出" }
+fun new() { return { items: {}, size: 0 /* ... */ } }
+return { new: new }              // 只导出 new
+```
+
+```js
+// ---- main.fun ----
+math := import("mathlib.fun")
+print(math.add(2, 3))            // 5
+print(math.PI)                   // 3.14159
+
+stack := import("stack")          // 省略 .fun
+s := stack.new()
+print(has(stack, "helper"))      // false（没导出）
+```
+
+（完整演示见 [`__example/module.fun`](__example/module.fun) 与 `__example/pkg/`）
+
 ### 内置函数
 
 | 函数 | 说明 |
@@ -256,6 +317,8 @@ print(c.value())           // 12
 | `assert(cond, msg)` | 断言，失败则报错 |
 | `input(prompt)` | 从标准输入读取一行 |
 | `now()` | 当前时间 |
+| `import(path)` | 加载一个 `.fun` 模块，返回其导出表 |
+| `coroutine(fn)` / `resume(co, ...)` / `yield(v)` / `costatus(co)` | 协程原语 |
 | `VERSION` | 版本号常量 |
 
 完整可运行的示例见 [`__example/showcase.fun`](__example/showcase.fun)。
@@ -269,9 +332,11 @@ print(c.value())           // 12
 
 - `lexer/`：用一组正则按优先级从左到右吃 token。
 - `parser/`：左递归下降，把 token 变成 `[]any` 形式的 s-expression，
-  例如 `1 + 2 * 3` → `["add", 1, ["mul", 2, 3]]`。
-- `vm/`：一个树遍历（tree-walking）解释器，`vm.go` 负责求值与作用域（环境链），
-  `interface.go` 提供内置函数。
+  例如 `1 + 2 * 3` → `["@add", 1, ["@mul", 2, 3]]`（运算符用 `@` 前缀，
+  放进用户取不到的命名空间，因此把函数命名为 `add` 也不会覆盖 `+`）。
+- `vm/`：一个树遍历（tree-walking）解释器。`vm.go` 负责求值与作用域（环境链），
+  `interface.go` 提供内置函数，`module.go` 实现 import，`coroutine.go`
+  基于 goroutine 实现协程。
 
 ## 目录结构
 
@@ -280,11 +345,18 @@ print(c.value())           // 12
 ├── main.go            入口：读文件 → 词法 → 语法 → 求值
 ├── lexer/             词法分析器
 ├── parser/            语法分析器（构建 s-expression）
-├── vm/                解释器与内置函数
+├── vm/                解释器
+│   ├── vm.go          求值与作用域
+│   ├── interface.go   内置函数
+│   ├── module.go      多文件编程：import / 导出
+│   └── coroutine.go   协程：coroutine / resume / yield
 └── __example/         示例代码
     ├── base.fun       基础语法
     ├── fibonaci.fun   递归：斐波那契
     ├── this.fun       用 this 构造对象
     ├── objects.fun    表 { } 的灵活性：记录 / 数组 / 方法 / 对象
+    ├── coroutine.fun  协程：生成器 / 双向通信 / 协作式调度
+    ├── module.fun     多文件编程：导入 pkg/ 下的模块
+    ├── pkg/           被导入的模块（mathlib.fun / stack.fun）
     └── showcase.fun   特性总览（推荐从这里开始）
 ```
