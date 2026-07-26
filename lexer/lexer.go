@@ -80,6 +80,8 @@ func NewLexer() *Lexer {
 
 	// 定义token匹配规则（注意顺序很重要）
 	patterns := []TokenPattern{
+		// 注释（必须在除法之前，行尾或文件末尾都可以）
+		{`^//[^\n]*`, BLANK, nil},
 		// 括号
 		{`^[\(\)\{\}\[\]]`, BRACKETS, nil},
 		// 浮点数（必须在整数之前）
@@ -88,25 +90,24 @@ func NewLexer() *Lexer {
 		{`^[+-]?\d+`, INT, nil},
 		// 空白字符
 		{`^\s+`, BLANK, nil},
-		// 逗号
-		{`^,`, BLANK, nil},
-		// 注释 (Go的正则不支持\r\n，需要分别处理)
-		{`^//.*\n`, BLANK, nil},
-		{`^//.*\r\n`, BLANK, nil},
+		// 逗号（参数/元素分隔符，作为独立 token 以消除歧义）
+		{`^,`, OPERATOR, nil},
 		// 字符串（单引号）
 		{`^'.*?'`, STRING, nil},
 		// 字符串（双引号）
 		{`^".*?"`, STRING, nil},
 		// 比较操作符（必须在单个字符操作符之前）
 		{`^(>=|<=|!=|==)`, OPERATOR, nil},
-		// 赋值操作符
+		// 赋值操作符（必须在冒号之前）
 		{`^:?=`, OPERATOR, nil},
-		// 算术操作符
-		{`^[\+\-\*\/]+`, OPERATOR, nil},
+		// 冒号（表字面量的键值分隔符）
+		{`^:`, OPERATOR, nil},
+		// 算术操作符（含取模）
+		{`^[\+\-\*\/%]+`, OPERATOR, nil},
 		// 其他操作符
 		{`^[<>\.]`, OPERATOR, nil},
-		// 关键字（必须在标识符之前）- 添加了return
-		{`^(if|while|else|fun|return|this)\b`, KEY, nil},
+		// 关键字（必须在标识符之前）
+		{`^(if|while|else|fun|return|this|true|false|nil|and|or|not)\b`, KEY, nil},
 		// 标识符
 		{`^[a-zA-Z_][a-zA-Z0-9_]*`, IDENTIFIER, nil},
 	}
