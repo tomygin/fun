@@ -3,7 +3,9 @@ package vm
 import (
 	"bufio"
 	"fmt"
+	"fun/number"
 	"math"
+	"math/big"
 	"os"
 	"reflect"
 	"sort"
@@ -33,8 +35,11 @@ func formatValue(value any) string {
 		return v
 	case *Coroutine:
 		return "<coroutine>"
+	case number.Dec, *big.Rat:
+		// 数字塔：定点小数 / 大数，精确十进制输出
+		return number.Format(v)
 	case float64:
-		// 整数值的浮点数去掉小数点，1.0 -> 1
+		// 宿主传入的浮点数（语言内运算不再产生 float64）
 		if v == math.Trunc(v) && !math.IsInf(v, 0) {
 			return strconv.FormatFloat(v, 'f', -1, 64)
 		}
@@ -78,10 +83,14 @@ func formatValue(value any) string {
 	}
 }
 
-// valuesEqual 判断相等：数字按数值比较（int 与 float 可跨类型相等），
-// 其它类型用深度比较。这样 0 与算术产生的 0.0 才会相等。
+// valuesEqual 判断相等：数字走数字塔精确比较（int / 定点小数 / 大数
+// 跨层可相等，0.1+0.2 == 0.3 为真），其它类型用深度比较。
 func valuesEqual(a, b any) bool {
+	if c, ok := number.Cmp(a, b); ok {
+		return c == 0
+	}
 	if isNumber(a) && isNumber(b) {
+		// 宿主 float 等塔外数字的兜底比较
 		na, _ := toNumber(a)
 		nb, _ := toNumber(b)
 		return na == nb
@@ -138,10 +147,8 @@ var interfaceFunctions = map[string]any{
 		if len(args) < 2 {
 			return false
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 > num2
-			}
+		if c, ok := number.Cmp(args[0], args[1]); ok {
+			return c > 0
 		}
 		return false
 	},
@@ -149,10 +156,8 @@ var interfaceFunctions = map[string]any{
 		if len(args) < 2 {
 			return false
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 >= num2
-			}
+		if c, ok := number.Cmp(args[0], args[1]); ok {
+			return c >= 0
 		}
 		return false
 	},
@@ -160,10 +165,8 @@ var interfaceFunctions = map[string]any{
 		if len(args) < 2 {
 			return false
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 <= num2
-			}
+		if c, ok := number.Cmp(args[0], args[1]); ok {
+			return c <= 0
 		}
 		return false
 	},
@@ -171,16 +174,14 @@ var interfaceFunctions = map[string]any{
 		if len(args) < 2 {
 			return false
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 < num2
-			}
+		if c, ok := number.Cmp(args[0], args[1]); ok {
+			return c < 0
 		}
 		return false
 	},
 	"@add": func(args ...any) any {
 		if len(args) < 2 {
-			return 0.0
+			return 0
 		}
 		// 任一操作数是字符串则做字符串拼接（借鉴 python/js 的 +）
 		_, isStr1 := args[0].(string)
@@ -188,56 +189,46 @@ var interfaceFunctions = map[string]any{
 		if isStr1 || isStr2 {
 			return formatValue(args[0]) + formatValue(args[1])
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 + num2
-			}
+		if r, ok := number.Add(args[0], args[1]); ok {
+			return r
 		}
-		return 0.0
+		return 0
 	},
 	"@sub": func(args ...any) any {
 		if len(args) < 2 {
-			return 0.0
+			return 0
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 - num2
-			}
+		if r, ok := number.Sub(args[0], args[1]); ok {
+			return r
 		}
-		return 0.0
+		return 0
 	},
 	"@mul": func(args ...any) any {
 		if len(args) < 2 {
-			return 1.0
+			return 1
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok {
-				return num1 * num2
-			}
+		if r, ok := number.Mul(args[0], args[1]); ok {
+			return r
 		}
-		return 1.0
+		return 1
 	},
 	"@div": func(args ...any) any {
 		if len(args) < 2 {
-			return 0.0
+			return 0
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok && num2 != 0 {
-				return num1 / num2
-			}
+		if r, ok := number.Div(args[0], args[1]); ok {
+			return r
 		}
-		return 0.0
+		return 0
 	},
 	"@mod": func(args ...any) any {
 		if len(args) < 2 {
-			return 0.0
+			return 0
 		}
-		if num1, ok := toNumber(args[0]); ok {
-			if num2, ok := toNumber(args[1]); ok && num2 != 0 {
-				return math.Mod(num1, num2)
-			}
+		if r, ok := number.Mod(args[0], args[1]); ok {
+			return r
 		}
-		return 0.0
+		return 0
 	},
 	"print": func(args ...any) any {
 		parts := make([]string, 0, len(args))
@@ -287,6 +278,17 @@ var interfaceFunctions = map[string]any{
 	// num 把值转成数字（失败返回 nil）
 	"num": func(args ...any) any {
 		if len(args) < 1 {
+			return nil
+		}
+		// 已经是塔内数字：原样返回
+		if number.Is(args[0]) {
+			return args[0]
+		}
+		// 字符串按精确十进制解析（"0.1" 就是精确的 1/10）
+		if s, ok := args[0].(string); ok {
+			if v, ok := number.Parse(s); ok {
+				return v
+			}
 			return nil
 		}
 		if n, ok := toNumber(args[0]); ok {

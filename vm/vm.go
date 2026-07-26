@@ -2,7 +2,9 @@ package vm
 
 import (
 	"fmt"
+	"fun/number"
 	"maps"
+	"math/big"
 	"reflect"
 	"strconv"
 	"strings"
@@ -136,7 +138,8 @@ func unescapeString(s string) string {
 
 func isNumber(exp any) bool {
 	switch exp.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64,
+		number.Dec, *big.Rat:
 		return true
 	}
 	return false
@@ -191,6 +194,9 @@ func toNumber(exp any) (float64, bool) {
 		return float64(v), true
 	case float64:
 		return v, true
+	case number.Dec, *big.Rat:
+		// 数字塔的值近似成 float64（仅用于字符串下标等宿主交互）
+		return number.ToFloat(v)
 	case string:
 		if num, err := strconv.ParseFloat(v, 64); err == nil {
 			return num, true
@@ -220,7 +226,11 @@ func toBool(exp any) bool {
 	switch v := exp.(type) {
 	case bool:
 		return v
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+	case int:
+		return v != 0
+	case number.Dec, *big.Rat:
+		return !number.IsZero(v)
+	case int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return reflect.ValueOf(v).Int() != 0
 	case float32, float64:
 		return reflect.ValueOf(v).Float() != 0
@@ -399,7 +409,7 @@ func (vm *VM) Eval(exp any) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				table[fmt.Sprint(key)] = value
+				table[formatValue(key)] = value
 			}
 			return table, nil
 		}
@@ -418,7 +428,7 @@ func (vm *VM) Eval(exp any) (any, error) {
 			switch container := obj.(type) {
 			case map[string]any:
 				// 缺失的键返回 nil（借鉴 lua）
-				return container[fmt.Sprint(key)], nil
+				return container[formatValue(key)], nil
 			case string:
 				if idx, ok := toNumber(key); ok {
 					runes := []rune(container)
@@ -559,7 +569,7 @@ func (vm *VM) Eval(exp any) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				key = fmt.Sprint(k)
+				key = formatValue(k)
 			}
 			table[key] = value
 			return value, nil
