@@ -94,10 +94,12 @@ func NewLexer() *Lexer {
 		{`^,`, OPERATOR, nil},
 		// 分号（三段式 for 的子句分隔符）
 		{`^;`, OPERATOR, nil},
-		// 字符串（单引号）
-		{`^'.*?'`, STRING, nil},
-		// 字符串（双引号）
-		{`^".*?"`, STRING, nil},
+		// 字符串（单引号，支持 \' 等转义）
+		{`^'(?:\\.|[^'\\])*'`, STRING, nil},
+		// 字符串（双引号，支持 \" 等转义）
+		{`^"(?:\\.|[^"\\])*"`, STRING, nil},
+		// 模板字符串（反引号：原样保留、可跨多行、支持 ${表达式} 插值）
+		{"^`[^`]*`", STRING, nil},
 		// 比较与逻辑操作符（必须在单个字符操作符之前，!= 要在 ! 之前）
 		{`^(>=|<=|!=|==|&&|\|\|)`, OPERATOR, nil},
 		// 管道操作符（必须在 || 之后）
@@ -112,8 +114,8 @@ func NewLexer() *Lexer {
 		{`^[<>\.!]`, OPERATOR, nil},
 		// 关键字（必须在标识符之前）
 		{`^(if|for|else|fun|return|this|true|false|nil)\b`, KEY, nil},
-		// 标识符
-		{`^[a-zA-Z_][a-zA-Z0-9_]*`, IDENTIFIER, nil},
+		// 标识符（可带 @ 前缀 —— 开放的元编程空间，如 @add 是 + 的实现）
+		{`^@?[a-zA-Z_][a-zA-Z0-9_]*`, IDENTIFIER, nil},
 	}
 
 	// 编译正则表达式
@@ -174,15 +176,15 @@ func (l *Lexer) lex() Token {
 			// 更新游标
 			l.cursor += len(match)
 
-			// 如果是空白字符，更新行号
-			if pattern.Type == BLANK {
-				l.line += strings.Count(match, "\n")
-			}
+			// token 记录起始行；任何跨行的匹配（空白、多行模板字符串）
+			// 都要累加行号
+			tokenLine := l.line
+			l.line += strings.Count(match, "\n")
 
 			return Token{
 				Type:  pattern.Type,
 				Value: match,
-				Line:  l.line,
+				Line:  tokenLine,
 			}
 		}
 	}

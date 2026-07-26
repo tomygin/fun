@@ -479,6 +479,124 @@ func TestMethodChainingLong(t *testing.T) {
 	}
 }
 
+// ---------- 元编程 @ 空间 ----------
+
+func TestOperatorLocalOverride(t *testing.T) {
+	// 函数内覆盖 @add，退出后自动恢复
+	code := `
+	fun weird() {
+		@add := fun(a, b) { return 100 }
+		return 1 + 2
+	}
+	w := weird()
+	n := 1 + 2
+	w * 1000 + n` // 100*1000 + 3
+	if got := run(t, code); got != 100003.0 {
+		t.Errorf("override = %v, want 100003", got)
+	}
+}
+
+func TestOperatorAsValue(t *testing.T) {
+	// 运算符本身是一等值，可以当参数传
+	code := `
+	fun reduce(t, f, init) {
+		acc := init
+		for i := 0; i < len(t); i++ { acc = f(acc, t[i]) }
+		return acc
+	}
+	reduce({ 1, 2, 3, 4 }, @add, 0)`
+	if got := run(t, code); got != 10.0 {
+		t.Errorf("reduce(@add) = %v, want 10", got)
+	}
+}
+
+func TestOperatorSaveAndWrap(t *testing.T) {
+	// save-and-wrap：覆盖体内用保存的原实现
+	code := `
+	fun demo() {
+		old := @add
+		@add := fun(a, b) { return old(a, b) * 10 }
+		return 1 + 2
+	}
+	demo()`
+	if got := run(t, code); got != 30.0 {
+		t.Errorf("save-and-wrap = %v, want 30", got)
+	}
+}
+
+// ---------- 字符串：转义 / 模板 ----------
+
+func TestStringEscapes(t *testing.T) {
+	if got := run(t, `"a\nb"`); got != "a\nb" {
+		t.Errorf("escape \\n = %q", got)
+	}
+	if got := run(t, `"say \"hi\""`); got != `say "hi"` {
+		t.Errorf("escape quote = %q", got)
+	}
+	if got := run(t, `'it\'s'`); got != "it's" {
+		t.Errorf("escape single quote = %q", got)
+	}
+	if got := run(t, `"back\\slash"`); got != `back\slash` {
+		t.Errorf("escape backslash = %q", got)
+	}
+}
+
+func TestTemplateString(t *testing.T) {
+	code := "name := \"Gin\"\n`hi ${name}, ${1 + 2}`"
+	if got := run(t, code); got != "hi Gin, 3" {
+		t.Errorf("template = %q, want hi Gin, 3", got)
+	}
+}
+
+func TestTemplateStringRaw(t *testing.T) {
+	// 反引号内不处理转义，\n 原样保留
+	code := "`a\\nb`"
+	if got := run(t, code); got != `a\nb` {
+		t.Errorf("raw = %q, want a\\nb", got)
+	}
+}
+
+func TestTemplateStringMultiline(t *testing.T) {
+	code := "`line1\nline2`"
+	if got := run(t, code); got != "line1\nline2" {
+		t.Errorf("multiline = %q", got)
+	}
+}
+
+func TestTemplateStringNestedBraces(t *testing.T) {
+	code := "`n=${len({ 1, 2, 3 })}`"
+	if got := run(t, code); got != "n=3" {
+		t.Errorf("nested braces = %q, want n=3", got)
+	}
+}
+
+// ---------- 真值规则 ----------
+
+func TestFalsyValues(t *testing.T) {
+	falsy := []string{`bool(false)`, `bool(nil)`, `bool(0)`, `bool(0.0)`, `bool("")`, `bool({})`}
+	for _, code := range falsy {
+		if got := run(t, code); got != false {
+			t.Errorf("%s = %v, want false", code, got)
+		}
+	}
+	truthy := []string{`bool("0")`, `bool("false")`, `bool(-1)`, `bool({ 1 })`}
+	for _, code := range truthy {
+		if got := run(t, code); got != true {
+			t.Errorf("%s = %v, want true", code, got)
+		}
+	}
+}
+
+// ---------- merge 优先级 ----------
+
+func TestMergePriority(t *testing.T) {
+	// 越靠后的表优先级越高
+	code := `merge({ a: 1, b: 1 }, { a: 2 }, { a: 3, b: 2 }).a`
+	if got := run(t, code); got != 3 {
+		t.Errorf("merge priority = %v, want 3 (最后的表赢)", got)
+	}
+}
+
 // runInDir 在指定目录下求值代码（供 import 测试解析相对路径）
 func runInDir(t *testing.T, dir, code string) any {
 	t.Helper()
