@@ -191,6 +191,68 @@ func TestClosureCounter(t *testing.T) {
 	}
 }
 
+func TestNamedFunctionInTable(t *testing.T) {
+	code := `
+	fun square(x) { return x * x }
+	t := { f: square }
+	t.f(6)`
+	if got := run(t, code); got != 36.0 {
+		t.Errorf("t.f(6) = %v, want 36", got)
+	}
+}
+
+func TestAnonFunctionAsMethod(t *testing.T) {
+	code := `
+	dog := {
+		name: "旺财",
+		hello: fun() { return this.name }
+	}
+	dog.hello()`
+	if got := run(t, code); got != "旺财" {
+		t.Errorf("dog.hello() = %v, want 旺财", got)
+	}
+}
+
+// TestThisReceiverMutation 方法通过 this 读写字段，改动落在原对象上
+func TestThisReceiverMutation(t *testing.T) {
+	code := `
+	fun newAccount(balance) {
+		return {
+			balance: balance,
+			deposit: fun(n) { this.balance = this.balance + n  return this.balance }
+		}
+	}
+	acc := newAccount(100)
+	acc.deposit(50)
+	acc.balance`
+	if got := run(t, code); got != 150.0 {
+		t.Errorf("acc.balance = %v, want 150", got)
+	}
+}
+
+func TestObjectInstancesAreIndependent(t *testing.T) {
+	code := `
+	fun box(v) {
+		return { v: v, set: fun(x) { this.v = x }, get: fun() { return this.v } }
+	}
+	a := box(1)
+	b := box(2)
+	a.set(100)
+	a.get() + b.get()`
+	if got := run(t, code); got != 102.0 {
+		t.Errorf("a.get() + b.get() = %v, want 102", got)
+	}
+}
+
+func TestHigherOrderFunction(t *testing.T) {
+	code := `
+	fun apply(f, x) { return f(x) }
+	apply(fun(n) { return n + 1 }, 41)`
+	if got := run(t, code); got != 42.0 {
+		t.Errorf("apply = %v, want 42", got)
+	}
+}
+
 func TestElseIfChain(t *testing.T) {
 	code := `
 	fun grade(s) {

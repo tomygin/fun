@@ -85,7 +85,11 @@ func (p *Parser) work() any {
 		case "return":
 			return p.returnStatement()
 		}
-		// this / true / false / nil / not 等作为表达式
+		// this.x = v / this[k] = v 这类以 this 开头的属性赋值
+		if p.current().Value == "this" && p.scanAssign() {
+			return p.varAssign()
+		}
+		// this / true / false / nil 等作为表达式
 		return p.parseExpression()
 	default:
 		// INT / FLOAT / STRING / ( / { / 一元运算符 等都是表达式
@@ -291,6 +295,9 @@ func (p *Parser) parsePrimary() any {
 		case "nil":
 			p.cursor++
 			return []any{"nil"}
+		case "fun":
+			// 表达式位置的 fun 是匿名函数（可作为表的值 / 参数 / 返回值）
+			return p.funExpr()
 		}
 	case lexer.BRACKETS:
 		if p.current().Value == "(" {
@@ -360,11 +367,17 @@ func (p *Parser) varDeclare() []any {
 	return []any{"var", name, value}
 }
 
-// scanAssign 向前扫描，判断当前标识符是否是赋值语句的左值
-// 左值形如： name (.ident | [expr])*  后面紧跟一个 '='
+// scanAssign 向前扫描，判断当前位置是否是赋值语句的左值
+// 左值形如： (标识符 | this) (.ident | [expr])*  后面紧跟一个 '='
 func (p *Parser) scanAssign() bool {
 	i := p.cursor
-	if i >= len(p.tokens) || p.tokens[i].Type != lexer.IDENTIFIER {
+	if i >= len(p.tokens) {
+		return false
+	}
+	base := p.tokens[i]
+	isBase := base.Type == lexer.IDENTIFIER ||
+		(base.Type == lexer.KEY && base.Value == "this")
+	if !isBase {
 		return false
 	}
 	i++
@@ -610,22 +623,14 @@ func (p *Parser) ifStatement() []any {
 	return []any{"if", condition, body, elseBody}
 }
 
-// defStatement 函数定义
-func (p *Parser) defStatement() []any {
-	p.cursor++
-
-	if p.current().Type != lexer.IDENTIFIER {
-		panic("fun statement name must be identifier")
-	}
-
-	name := p.current().Value
-	if p.back().Value != "(" {
+// parseParams 解析 ( a, b, c ) 形式的形参列表（逗号可选）
+func (p *Parser) parseParams() []any {
+	if p.current().Value != "(" {
 		panic("fun statement must be '('")
 	}
+	p.cursor++ // 跳过 '('
 
-	p.cursor += 2
 	var args []any
-
 	for p.current().Value != ")" {
 		if p.current().Type != lexer.IDENTIFIER {
 			panic("fun statement arg must be identifier")
@@ -634,19 +639,33 @@ func (p *Parser) defStatement() []any {
 		p.cursor++
 		p.skipComma()
 	}
+	p.cursor++ // 跳过 ')'
+	return args
+}
 
-	if p.back().Value != "{" {
-		panic("fun statement must be '{'")
-	}
+// defStatement 具名函数定义： fun name(args) { body }
+func (p *Parser) defStatement() []any {
+	p.cursor++ // 跳过 'fun'
 
-	p.cursor += 2
-	body := []any{"begin"}
-	for p.current().Value != "}" {
-		body = append(body, p.work())
+	if p.current().Type != lexer.IDENTIFIER {
+		panic("fun statement name must be identifier")
 	}
-	p.cursor++
+	name := p.current().Value
+	p.cursor++ // 跳过函数名
+
+	args := p.parseParams()
+	body := p.parseBlock()
 
 	return []any{"fun", name, args, body}
+}
+
+// funExpr 匿名函数表达式： fun(args) { body }
+// 可以作为表的值、函数参数、返回值，从而让 { } 里能放"方法"
+func (p *Parser) funExpr() []any {
+	p.cursor++ // 跳过 'fun'
+	args := p.parseParams()
+	body := p.parseBlock()
+	return []any{"fun-expr", args, body}
 }
 
 // returnStatement 处理 return 语句

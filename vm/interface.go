@@ -58,8 +58,13 @@ func formatValue(value any) string {
 			}
 			b.WriteString(k)
 			b.WriteString(": ")
-			if _, ok := v[k].(map[string]any); ok {
-				b.WriteString("{...}") // 避免递归/循环引用
+			if child, ok := v[k].(map[string]any); ok {
+				// 嵌套表：函数显示为 <function>，其它只显示 {...} 避免深层/循环递归
+				if isUserFunc(child) {
+					b.WriteString("<function>")
+				} else {
+					b.WriteString("{...}")
+				}
 			} else {
 				b.WriteString(formatValue(v[k]))
 			}
