@@ -1,21 +1,14 @@
-fun fibonaci (n){
-    if(n < 2){
-      return   1
-    }else{
-         return (
-            fibonaci(n - 1)
-            +
-            fibonaci(n - 2)
-        )
+// 斐波那契数列 —— 递归现在可以正常工作了
+// 函数在自己的闭包里可见，所以能自我调用（也支持相互递归）
+
+fun fib(n) {
+    if n < 2 {
+        return n
     }
+    return fib(n - 1) + fib(n - 2)
 }
 
-print(now())
-
-times := 0
-
-print(fibonaci(2))
-
-print(now())
-
-//TODO:fix fibonaci
+// 打印前 10 项（go 风格的三段式 for）
+for i := 0; i < 10; i++ {
+    print("fib(", i, ") = ", fib(i))
+}

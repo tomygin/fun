@@ -56,66 +56,73 @@ func (p *Parser) parse() []any {
 	return nodes
 }
 
-// work 主要的解析逻辑
+// work 主要的解析逻辑：区分语句和表达式
 func (p *Parser) work() any {
 	switch p.current().Type {
-	case lexer.INT:
-		return p.intLiteral()
-	case lexer.FLOAT:
-		return p.floatLiteral()
-	case lexer.STRING:
-		return p.stringLiteral()
 	case lexer.IDENTIFIER:
 		// 变量声明
 		if p.back().Value == ":=" {
 			return p.varDeclare()
 		}
-		// 变量修改
-		if p.back().Value == "=" {
-			return p.varAssign()
-		}
-		// 函数调用
-		if p.back().Value == "(" {
-			return p.varCall()
-		}
 		// 自增
 		if p.back().Value == "++" {
 			return p.selfAddSugar()
 		}
-
-		// 检查是否是表达式的一部分
+		// 赋值（支持 a = v / a.b = v / a[i] = v）
+		if p.scanAssign() {
+			return p.varAssign()
+		}
+		// 否则作为表达式求值
 		return p.parseExpression()
 	case lexer.KEY:
 		switch p.current().Value {
-		case "while":
-			return p.whileStatement()
+		case "for":
+			return p.forStatement()
 		case "if":
 			return p.ifStatement()
 		case "fun":
 			return p.defStatement()
 		case "return":
 			return p.returnStatement()
-		case "this":
-			{
-				result := p.current().Value
-				p.cursor++
-				return result
-			}
-
 		}
-	case lexer.BRACKETS:
-		if p.current().Value == "(" {
-			return p.expressionSugar()
-		}
-	case lexer.OPERATOR:
-		return p.operatorLiteral()
+		// this / true / false / nil / not 等作为表达式
+		return p.parseExpression()
+	default:
+		// INT / FLOAT / STRING / ( / { / 一元运算符 等都是表达式
+		return p.parseExpression()
 	}
-	panic(fmt.Sprintf("unknown token %+v", p.current()))
 }
 
 // parseExpression 解析表达式（支持运算符优先级）
+// 优先级从低到高：or -> and -> 比较 -> 加减 -> 乘除模 -> 一元 -> 后缀 -> 基本
 func (p *Parser) parseExpression() any {
-	return p.parseComparison()
+	return p.parseLogicalOr()
+}
+
+// parseLogicalOr 解析逻辑或 (||)，短路由 VM 处理
+func (p *Parser) parseLogicalOr() any {
+	left := p.parseLogicalAnd()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "||" {
+		p.cursor++
+		right := p.parseLogicalAnd()
+		left = []any{"or", left, right}
+	}
+
+	return left
+}
+
+// parseLogicalAnd 解析逻辑与 (&&)，短路由 VM 处理
+func (p *Parser) parseLogicalAnd() any {
+	left := p.parseComparison()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "&&" {
+		p.cursor++
+		right := p.parseComparison()
+		left = []any{"and", left, right}
+	}
+
+	return left
 }
 
 // parseComparison 解析比较运算符 (==, !=, <, >, <=, >=)
@@ -154,15 +161,15 @@ func (p *Parser) parseAddition() any {
 	return left
 }
 
-// parseMultiplication 解析乘除运算符
+// parseMultiplication 解析乘除模运算符
 func (p *Parser) parseMultiplication() any {
-	left := p.parsePropertyAccess()
+	left := p.parseUnary()
 
 	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR {
 		op := p.current().Value
-		if op == "*" || op == "/" {
+		if op == "*" || op == "/" || op == "%" {
 			p.cursor++
-			right := p.parsePropertyAccess()
+			right := p.parseUnary()
 			left = []any{p.convertOperator(op), left, right}
 		} else {
 			break
@@ -172,39 +179,82 @@ func (p *Parser) parseMultiplication() any {
 	return left
 }
 
-// parsePropertyAccess 解析属性访问 (obj.property)
-func (p *Parser) parsePropertyAccess() any {
+// parseUnary 解析一元运算符 (-x, +x, not x)
+func (p *Parser) parseUnary() any {
+	cur := p.current()
+
+	if cur.Type == lexer.OPERATOR && (cur.Value == "-" || cur.Value == "+") {
+		p.cursor++
+		operand := p.parseUnary()
+		if cur.Value == "-" {
+			// -x 等价于 0 - x
+			return []any{"sub", 0, operand}
+		}
+		return operand
+	}
+
+	if cur.Type == lexer.OPERATOR && cur.Value == "!" {
+		p.cursor++
+		return []any{"not", p.parseUnary()}
+	}
+
+	return p.parsePostfix()
+}
+
+// parsePostfix 解析后缀访问：属性 obj.property、方法 obj.method()、下标 obj[key]
+func (p *Parser) parsePostfix() any {
 	left := p.parsePrimary()
 
-	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "." {
-		p.cursor++ // 跳过 '.'
+	for p.cursor < len(p.tokens) {
+		cur := p.current()
 
-		if p.current().Type != lexer.IDENTIFIER {
-			panic("expected identifier after '.'")
-		}
+		// 属性访问或方法调用
+		if cur.Type == lexer.OPERATOR && cur.Value == "." {
+			p.cursor++ // 跳过 '.'
 
-		property := p.current().Value
-		p.cursor++
-
-		// 检查是否是方法调用
-		if p.cursor < len(p.tokens) && p.current().Value == "(" {
-			p.cursor++ // 跳过 '('
-
-			// 解析参数
-			var args []any
-			for p.current().Value != ")" {
-				args = append(args, p.parseExpression())
+			if p.current().Type != lexer.IDENTIFIER {
+				panic("expected identifier after '.'")
 			}
-			p.cursor++ // 跳过 ')'
 
-			// 返回方法调用节点 ["method-call", object, method_name, ...args]
-			methodCall := []any{"method-call", left, property}
-			methodCall = append(methodCall, args...)
-			left = methodCall
-		} else {
-			// 属性访问 ["property", object, property_name]
-			left = []any{"property", left, property}
+			property := p.current().Value
+			p.cursor++
+
+			// 检查是否是方法调用
+			if p.cursor < len(p.tokens) && p.current().Value == "(" {
+				p.cursor++ // 跳过 '('
+
+				// 解析参数
+				var args []any
+				for p.current().Value != ")" {
+					args = append(args, p.parseExpression())
+					p.skipComma()
+				}
+				p.cursor++ // 跳过 ')'
+
+				// 返回方法调用节点 ["method-call", object, method_name, ...args]
+				methodCall := []any{"method-call", left, property}
+				methodCall = append(methodCall, args...)
+				left = methodCall
+			} else {
+				// 属性访问 ["property", object, property_name]
+				left = []any{"property", left, property}
+			}
+			continue
 		}
+
+		// 下标访问 obj[key]
+		if cur.Value == "[" {
+			p.cursor++ // 跳过 '['
+			index := p.parseExpression()
+			if p.current().Value != "]" {
+				panic("expected ']' after index")
+			}
+			p.cursor++ // 跳过 ']'
+			left = []any{"index", left, index}
+			continue
+		}
+
+		break
 	}
 
 	return left
@@ -227,14 +277,27 @@ func (p *Parser) parsePrimary() any {
 		// 变量
 		return p.varSelf()
 	case lexer.KEY:
-		if p.current().Value == "this" {
+		switch p.current().Value {
+		case "this":
 			result := p.current().Value
 			p.cursor++
 			return result
+		case "true":
+			p.cursor++
+			return true
+		case "false":
+			p.cursor++
+			return false
+		case "nil":
+			p.cursor++
+			return []any{"nil"}
 		}
 	case lexer.BRACKETS:
 		if p.current().Value == "(" {
 			return p.expressionSugar()
+		}
+		if p.current().Value == "{" {
+			return p.parseTable()
 		}
 	}
 	panic(fmt.Sprintf("unexpected token in expression: %+v", p.current()))
@@ -245,6 +308,7 @@ func (p *Parser) convertOperator(op string) string {
 	convertMap := map[string]string{
 		"*":  "mul",
 		"/":  "div",
+		"%":  "mod",
 		"-":  "sub",
 		"+":  "add",
 		">":  "gt",
@@ -288,31 +352,6 @@ func (p *Parser) stringLiteral() string {
 	return value
 }
 
-// operatorLiteral 解析操作符
-func (p *Parser) operatorLiteral() string {
-	value := p.current().Value
-
-	convertMap := map[string]string{
-		"*":  "mul",
-		"/":  "div",
-		"-":  "sub",
-		"+":  "add",
-		">":  "gt",
-		"<":  "lt",
-		">=": "gte",
-		"<=": "lte",
-		"==": "eq",
-		"!=": "neq",
-	}
-
-	if converted, ok := convertMap[value]; ok {
-		value = converted
-	}
-
-	p.cursor++
-	return value
-}
-
 // varDeclare 变量声明
 func (p *Parser) varDeclare() []any {
 	name := p.current().Value
@@ -321,12 +360,104 @@ func (p *Parser) varDeclare() []any {
 	return []any{"var", name, value}
 }
 
-// varAssign 变量赋值
+// scanAssign 向前扫描，判断当前标识符是否是赋值语句的左值
+// 左值形如： name (.ident | [expr])*  后面紧跟一个 '='
+func (p *Parser) scanAssign() bool {
+	i := p.cursor
+	if i >= len(p.tokens) || p.tokens[i].Type != lexer.IDENTIFIER {
+		return false
+	}
+	i++
+	for i < len(p.tokens) {
+		v := p.tokens[i].Value
+		if v == "." {
+			i += 2 // 跳过 '.' 和属性名
+		} else if v == "[" {
+			depth := 1
+			i++
+			for i < len(p.tokens) && depth > 0 {
+				switch p.tokens[i].Value {
+				case "[":
+					depth++
+				case "]":
+					depth--
+				}
+				i++
+			}
+		} else {
+			break
+		}
+	}
+	return i < len(p.tokens) &&
+		p.tokens[i].Type == lexer.OPERATOR &&
+		p.tokens[i].Value == "="
+}
+
+// parseLValue 解析赋值左值，返回变量名(string) 或 ["property"/"index", ...] 节点
+func (p *Parser) parseLValue() any {
+	var left any = p.current().Value // 标识符名
+	p.cursor++
+
+	for {
+		switch p.current().Value {
+		case ".":
+			p.cursor++
+			prop := p.current().Value
+			p.cursor++
+			left = []any{"property", left, prop}
+		case "[":
+			p.cursor++
+			index := p.parseExpression()
+			if p.current().Value != "]" {
+				panic("expected ']' in assignment target")
+			}
+			p.cursor++
+			left = []any{"index", left, index}
+		default:
+			return left
+		}
+	}
+}
+
+// varAssign 变量赋值（支持 a = v / a.b = v / a[i] = v）
 func (p *Parser) varAssign() []any {
-	name := p.current().Value
-	p.cursor += 2
+	target := p.parseLValue()
+	p.cursor++ // 跳过 '='
 	value := p.parseExpression()
-	return []any{"assign", name, value}
+	return []any{"assign", target, value}
+}
+
+// parseTable 解析表字面量 { key: value  key2: value2 }（逗号被词法器忽略）
+func (p *Parser) parseTable() []any {
+	p.cursor++ // 跳过 '{'
+	result := []any{"table"}
+
+	for p.current().Value != "}" {
+		// 键：标识符 或 字符串
+		var key any
+		switch p.current().Type {
+		case lexer.IDENTIFIER:
+			// 用引号包裹让 VM 把它当作字符串常量求值
+			key = `"` + p.current().Value + `"`
+			p.cursor++
+		case lexer.STRING:
+			key = p.stringLiteral()
+		default:
+			panic(fmt.Sprintf("table key must be identifier or string, got %+v", p.current()))
+		}
+
+		if p.current().Value != ":" {
+			panic("expected ':' after table key")
+		}
+		p.cursor++ // 跳过 ':'
+
+		value := p.parseExpression()
+		result = append(result, key, value)
+		p.skipComma()
+	}
+
+	p.cursor++ // 跳过 '}'
+	return result
 }
 
 // varSelf 变量自身
@@ -334,6 +465,13 @@ func (p *Parser) varSelf() string {
 	value := p.current().Value
 	p.cursor++
 	return value
+}
+
+// skipComma 跳过可选的逗号分隔符（逗号可有可无，保持宽松）
+func (p *Parser) skipComma() {
+	if p.current().Value == "," {
+		p.cursor++
+	}
 }
 
 // varCall 函数调用
@@ -344,26 +482,93 @@ func (p *Parser) varCall() []any {
 
 	for p.current().Value != ")" {
 		args = append(args, p.parseExpression())
+		p.skipComma()
 	}
 	p.cursor++
 	return args
 }
 
-// whileStatement while循环
-func (p *Parser) whileStatement() []any {
-	p.cursor++
-	condition := p.parseExpression()
-
+// parseBlock 解析 { ... } 语句块，返回 ["begin", ...]
+func (p *Parser) parseBlock() []any {
 	if p.current().Value != "{" {
-		panic("while loop must be '{'")
+		panic("expected '{' to start a block")
 	}
-
 	p.cursor++
 	body := []any{"begin"}
 	for p.current().Value != "}" {
 		body = append(body, p.work())
 	}
 	p.cursor++
+	return body
+}
+
+// hasSemicolonBeforeBlock 向前扫描，判断循环体 '{' 之前是否有分号，
+// 用来区分三段式 for 和条件式 for
+func (p *Parser) hasSemicolonBeforeBlock() bool {
+	depth := 0
+	for i := p.cursor; i < len(p.tokens); i++ {
+		if p.tokens[i].Type == lexer.EOF {
+			break
+		}
+		switch p.tokens[i].Value {
+		case "(", "[":
+			depth++
+		case ")", "]":
+			depth--
+		case "{":
+			if depth == 0 {
+				return false // 到达循环体
+			}
+		case ";":
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// forStatement for 循环（借鉴 go：唯一的循环关键字，三种形式）
+//
+//	for { ... }                    无限循环
+//	for cond { ... }               条件循环
+//	for init; cond; post { ... }   三段式
+func (p *Parser) forStatement() []any {
+	p.cursor++ // 跳过 'for'
+
+	// for { }  无限循环
+	if p.current().Value == "{" {
+		body := p.parseBlock()
+		return []any{"while", true, body}
+	}
+
+	// for init; cond; post { }  三段式
+	if p.hasSemicolonBeforeBlock() {
+		init := p.work()
+		if p.current().Value != ";" {
+			panic("for: expected ';' after init clause")
+		}
+		p.cursor++
+
+		condition := p.parseExpression()
+		if p.current().Value != ";" {
+			panic("for: expected ';' after condition")
+		}
+		p.cursor++
+
+		post := p.work()
+		body := p.parseBlock()
+
+		// 脱糖为： { init; while cond { body...; post } }
+		loopBody := make([]any, len(body))
+		copy(loopBody, body)
+		loopBody = append(loopBody, post)
+		return []any{"begin", init, []any{"while", condition, loopBody}}
+	}
+
+	// for cond { }  条件循环
+	condition := p.parseExpression()
+	body := p.parseBlock()
 	return []any{"while", condition, body}
 }
 
@@ -387,6 +592,11 @@ func (p *Parser) ifStatement() []any {
 
 	if p.current().Value == "else" {
 		p.cursor++
+		// else if：把后续的 if 语句作为 else 分支的唯一语句（链式条件）
+		if p.current().Type == lexer.KEY && p.current().Value == "if" {
+			elseBody = append(elseBody, p.ifStatement())
+			return []any{"if", condition, body, elseBody}
+		}
 		if p.current().Value != "{" {
 			panic("else statement must be '{'")
 		}
@@ -422,6 +632,7 @@ func (p *Parser) defStatement() []any {
 		}
 		args = append(args, p.current().Value)
 		p.cursor++
+		p.skipComma()
 	}
 
 	if p.back().Value != "{" {
