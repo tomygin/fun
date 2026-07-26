@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"fun/lexer"
+	"fun/number"
 	"strconv"
 )
 
@@ -395,9 +396,9 @@ func (p *Parser) convertOperator(op string) string {
 	return op
 }
 
-// intLiteral 解析整数
-func (p *Parser) intLiteral() int {
-	value, err := strconv.Atoi(p.current().Value)
+// intLiteral 解析整数（超出 int64 自动用大数表示，永不因溢出报错）
+func (p *Parser) intLiteral() any {
+	value, err := number.ParseInt(p.current().Value)
 	if err != nil {
 		panic(fmt.Sprintf("invalid int: %s", p.current().Value))
 	}
@@ -405,9 +406,9 @@ func (p *Parser) intLiteral() int {
 	return value
 }
 
-// floatLiteral 解析浮点数
-func (p *Parser) floatLiteral() float64 {
-	value, err := strconv.ParseFloat(p.current().Value, 64)
+// floatLiteral 解析小数（精确十进制表示，0.1 就是精确的 1/10）
+func (p *Parser) floatLiteral() any {
+	value, err := number.ParseDec(p.current().Value)
 	if err != nil {
 		panic(fmt.Sprintf("invalid float: %s", p.current().Value))
 	}

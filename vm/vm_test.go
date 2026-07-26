@@ -22,13 +22,13 @@ func run(t *testing.T, code string) any {
 }
 
 func TestArithmetic(t *testing.T) {
-	if got := run(t, `1 + 2 * 3`); got != 7.0 {
+	if got := run(t, `1 + 2 * 3`); got != 7 {
 		t.Errorf("1 + 2 * 3 = %v, want 7", got)
 	}
-	if got := run(t, `10 % 3`); got != 1.0 {
+	if got := run(t, `10 % 3`); got != 1 {
 		t.Errorf("10 %% 3 = %v, want 1", got)
 	}
-	if got := run(t, `-5 + 2`); got != -3.0 {
+	if got := run(t, `-5 + 2`); got != -3 {
 		t.Errorf("-5 + 2 = %v, want -3", got)
 	}
 }
@@ -85,7 +85,7 @@ func TestRecursion(t *testing.T) {
 		return fib(n - 1) + fib(n - 2)
 	}
 	fib(10)`
-	if got := run(t, code); got != 55.0 {
+	if got := run(t, code); got != 55 {
 		t.Errorf("fib(10) = %v, want 55", got)
 	}
 }
@@ -121,7 +121,7 @@ func TestTableMutation(t *testing.T) {
 	u.b = 2
 	u["c"] = 3
 	u.a + u.b + u.c`
-	if got := run(t, code); got != 6.0 {
+	if got := run(t, code); got != 6 {
 		t.Errorf("sum = %v, want 6", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestTableAsArray(t *testing.T) {
 		arr[i] = i * i
 	}
 	arr[4]`
-	if got := run(t, code); got != 16.0 {
+	if got := run(t, code); got != 16 {
 		t.Errorf("arr[4] = %v, want 16", got)
 	}
 }
@@ -145,7 +145,7 @@ func TestForConditionForm(t *testing.T) {
 		n = n * 2
 	}
 	n`
-	if got := run(t, code); got != 128.0 {
+	if got := run(t, code); got != 128 {
 		t.Errorf("for-cond result = %v, want 128", got)
 	}
 }
@@ -157,7 +157,7 @@ func TestForThreeClause(t *testing.T) {
 		sum = sum + i
 	}
 	sum`
-	if got := run(t, code); got != 5050.0 {
+	if got := run(t, code); got != 5050 {
 		t.Errorf("sum 1..100 = %v, want 5050", got)
 	}
 }
@@ -172,7 +172,7 @@ func TestForInfiniteWithReturn(t *testing.T) {
 		}
 	}
 	countTo(7)`
-	if got := run(t, code); got != 7.0 {
+	if got := run(t, code); got != 7 {
 		t.Errorf("countTo(7) = %v, want 7", got)
 	}
 }
@@ -188,7 +188,7 @@ func TestClosureCounter(t *testing.T) {
 	c.inc()
 	c.inc()
 	c.inc()`
-	if got := run(t, code); got != 3.0 {
+	if got := run(t, code); got != 3 {
 		t.Errorf("counter = %v, want 3", got)
 	}
 }
@@ -198,7 +198,7 @@ func TestNamedFunctionInTable(t *testing.T) {
 	fun square(x) { return x * x }
 	t := { f: square }
 	t.f(6)`
-	if got := run(t, code); got != 36.0 {
+	if got := run(t, code); got != 36 {
 		t.Errorf("t.f(6) = %v, want 36", got)
 	}
 }
@@ -227,7 +227,7 @@ func TestThisReceiverMutation(t *testing.T) {
 	acc := newAccount(100)
 	acc.deposit(50)
 	acc.balance`
-	if got := run(t, code); got != 150.0 {
+	if got := run(t, code); got != 150 {
 		t.Errorf("acc.balance = %v, want 150", got)
 	}
 }
@@ -241,7 +241,7 @@ func TestObjectInstancesAreIndependent(t *testing.T) {
 	b := box(2)
 	a.set(100)
 	a.get() + b.get()`
-	if got := run(t, code); got != 102.0 {
+	if got := run(t, code); got != 102 {
 		t.Errorf("a.get() + b.get() = %v, want 102", got)
 	}
 }
@@ -250,7 +250,7 @@ func TestHigherOrderFunction(t *testing.T) {
 	code := `
 	fun apply(f, x) { return f(x) }
 	apply(fun(n) { return n + 1 }, 41)`
-	if got := run(t, code); got != 42.0 {
+	if got := run(t, code); got != 42 {
 		t.Errorf("apply = %v, want 42", got)
 	}
 }
@@ -275,7 +275,7 @@ func TestBuiltins(t *testing.T) {
 	if got := run(t, `type({ a: 1 })`); got != "table" {
 		t.Errorf("type = %v, want table", got)
 	}
-	if got := run(t, `num("42") + 8`); got != 50.0 {
+	if got := run(t, `num("42") + 8`); got != 50 {
 		t.Errorf("num = %v, want 50", got)
 	}
 	if got := run(t, `upper("fn")`); got != "FN" {
@@ -294,7 +294,7 @@ func TestOperatorNameNotShadowed(t *testing.T) {
 	code := `
 	fun add(a, b) { return a + b + 1 }
 	add(2, 3) + (2 + 3)`
-	if got := run(t, code); got != 11.0 { // (2+3+1) + (2+3) = 6 + 5
+	if got := run(t, code); got != 11 { // (2+3+1) + (2+3) = 6 + 5
 		t.Errorf("got %v, want 11", got)
 	}
 }
@@ -311,7 +311,7 @@ func TestCoroutineYield(t *testing.T) {
 	b := resume(co)
 	c := resume(co)
 	a + b * 10 + c * 100`
-	if got := run(t, code); got != 321.0 {
+	if got := run(t, code); got != 321 {
 		t.Errorf("coroutine yields = %v, want 321", got)
 	}
 }
@@ -343,7 +343,7 @@ func TestCoroutineTwoWay(t *testing.T) {
 	resume(co)          // 跑到第一个 yield
 	resume(co, 10)      // x = 10, 跑到第二个 yield
 	resume(co, 20)      // y = 20, 返回 x + y`
-	if got := run(t, code); got != 30.0 {
+	if got := run(t, code); got != 30 {
 		t.Errorf("two-way coroutine = %v, want 30", got)
 	}
 }
@@ -364,7 +364,7 @@ func TestPipeBasic(t *testing.T) {
 	fun double(x) { return x * 2 }
 	fun plus(a, b) { return a + b }
 	5 | double | plus(3)` // (5*2)+3
-	if got := run(t, code); got != 13.0 {
+	if got := run(t, code); got != 13 {
 		t.Errorf("pipe = %v, want 13", got)
 	}
 }
@@ -400,7 +400,7 @@ func TestCallValueCurried(t *testing.T) {
 	code := `
 	fun adder(a) { return fun(b) { return a + b } }
 	adder(3)(4)`
-	if got := run(t, code); got != 7.0 {
+	if got := run(t, code); got != 7 {
 		t.Errorf("adder(3)(4) = %v, want 7", got)
 	}
 }
@@ -409,7 +409,7 @@ func TestCallValueCurried(t *testing.T) {
 
 func TestArrayLiteral(t *testing.T) {
 	code := `arr := { 10, 20, 30 }  arr[0] + arr[2] * len(arr)`
-	if got := run(t, code); got != 100.0 { // 10 + 30*3
+	if got := run(t, code); got != 100 { // 10 + 30*3
 		t.Errorf("array literal = %v, want 100", got)
 	}
 }
@@ -463,7 +463,7 @@ func TestMixin(t *testing.T) {
 	B := { b: fun() { return 2 } }
 	C := merge(clone(A), B)
 	C.a() + C.b()`
-	if got := run(t, code); got != 3.0 {
+	if got := run(t, code); got != 3 {
 		t.Errorf("mixin = %v, want 3", got)
 	}
 }
@@ -474,7 +474,7 @@ func TestMethodChainingLong(t *testing.T) {
 		return { v: 0, add: fun(n) { this.v = this.v + n  return this } }
 	}
 	box().add(1).add(2).add(3).v`
-	if got := run(t, code); got != 6.0 {
+	if got := run(t, code); got != 6 {
 		t.Errorf("chain = %v, want 6", got)
 	}
 }
@@ -491,7 +491,7 @@ func TestOperatorLocalOverride(t *testing.T) {
 	w := weird()
 	n := 1 + 2
 	w * 1000 + n` // 100*1000 + 3
-	if got := run(t, code); got != 100003.0 {
+	if got := run(t, code); got != 100003 {
 		t.Errorf("override = %v, want 100003", got)
 	}
 }
@@ -505,7 +505,7 @@ func TestOperatorAsValue(t *testing.T) {
 		return acc
 	}
 	reduce({ 1, 2, 3, 4 }, @add, 0)`
-	if got := run(t, code); got != 10.0 {
+	if got := run(t, code); got != 10 {
 		t.Errorf("reduce(@add) = %v, want 10", got)
 	}
 }
@@ -519,7 +519,7 @@ func TestOperatorSaveAndWrap(t *testing.T) {
 		return 1 + 2
 	}
 	demo()`
-	if got := run(t, code); got != 30.0 {
+	if got := run(t, code); got != 30 {
 		t.Errorf("save-and-wrap = %v, want 30", got)
 	}
 }
@@ -587,6 +587,85 @@ func TestFalsyValues(t *testing.T) {
 	}
 }
 
+// ---------- 数字塔：精度与溢出 ----------
+
+func TestDecimalExact(t *testing.T) {
+	if got := run(t, `0.1 + 0.2 == 0.3`); got != true {
+		t.Errorf("0.1 + 0.2 == 0.3 => %v, want true", got)
+	}
+	if got := run(t, `str(0.1 + 0.2)`); got != "0.3" {
+		t.Errorf("str(0.1+0.2) = %q, want 0.3", got)
+	}
+	if got := run(t, `0.1 * 0.2 == 0.02`); got != true {
+		t.Errorf("0.1 * 0.2 == 0.02 => %v", got)
+	}
+	if got := run(t, `str(1.1 - 1)`); got != "0.1" {
+		t.Errorf("str(1.1-1) = %q, want 0.1", got)
+	}
+}
+
+func TestIntNoPrecisionLoss(t *testing.T) {
+	// float64 的 53 位尾数问题：2^53 + 1 必须精确
+	if got := run(t, `str(9007199254740992 + 1)`); got != "9007199254740993" {
+		t.Errorf("2^53+1 = %v", got)
+	}
+}
+
+func TestIntOverflowPromotion(t *testing.T) {
+	// int64 溢出自动提升为大数，永不回绕
+	if got := run(t, `str(9223372036854775807 + 1)`); got != "9223372036854775808" {
+		t.Errorf("int64max+1 = %v", got)
+	}
+	if got := run(t, `9223372036854775807 + 1 > 9223372036854775807`); got != true {
+		t.Errorf("大数比较错误")
+	}
+	if got := run(t, `9223372036854775807 + 1 - 1 == 9223372036854775807`); got != true {
+		t.Errorf("大数运算往返错误")
+	}
+}
+
+func TestExactDivision(t *testing.T) {
+	if got := run(t, `1 / 4 == 0.25`); got != true {
+		t.Errorf("1/4 == 0.25 => %v", got)
+	}
+	if got := run(t, `10 / 2`); got != 5 {
+		t.Errorf("10/2 = %v, want 5", got)
+	}
+	// 1/3 内部是精确有理数：乘回去等于 1
+	if got := run(t, `1 / 3 * 3 == 1`); got != true {
+		t.Errorf("1/3*3 == 1 => %v, want true（内部精确）", got)
+	}
+	// 无限循环小数打印截断到 20 位
+	if got := run(t, `str(1 / 3)`); got != "0.33333333333333333333" {
+		t.Errorf("str(1/3) = %q", got)
+	}
+}
+
+func TestDecimalMod(t *testing.T) {
+	if got := run(t, `str(5.5 % 2)`); got != "1.5" {
+		t.Errorf("5.5 %% 2 = %v, want 1.5", got)
+	}
+}
+
+func TestNumberNormalization(t *testing.T) {
+	// 0.5+0.5 归一化降回整数；2.50 归一为 2.5
+	if got := run(t, `0.5 + 0.5`); got != 1 {
+		t.Errorf("0.5+0.5 = %v, want int 1", got)
+	}
+	if got := run(t, `str(2.50)`); got != "2.5" {
+		t.Errorf("str(2.50) = %q, want 2.5", got)
+	}
+	if got := run(t, `1 == 1.0`); got != true {
+		t.Errorf("1 == 1.0 => %v", got)
+	}
+}
+
+func TestNumParsesExactDecimal(t *testing.T) {
+	if got := run(t, `num("0.1") + num("0.2") == 0.3`); got != true {
+		t.Errorf(`num("0.1")+num("0.2") == 0.3 => %v`, got)
+	}
+}
+
 // ---------- merge 优先级 ----------
 
 func TestMergePriority(t *testing.T) {
@@ -619,7 +698,7 @@ func TestModuleImplicitExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := `m := import("math.fun")  m.add(m.PI, 4)`
-	if got := runInDir(t, dir, code); got != 7.0 {
+	if got := runInDir(t, dir, code); got != 7 {
 		t.Errorf("m.add(m.PI, 4) = %v, want 7", got)
 	}
 }
