@@ -98,9 +98,55 @@ func (p *Parser) work() any {
 }
 
 // parseExpression 解析表达式（支持运算符优先级）
-// 优先级从低到高：or -> and -> 比较 -> 加减 -> 乘除模 -> 一元 -> 后缀 -> 基本
+// 优先级从低到高：管道 | -> or -> and -> 比较 -> 加减 -> 乘除模 -> 一元 -> 后缀 -> 基本
 func (p *Parser) parseExpression() any {
-	return p.parseLogicalOr()
+	return p.parsePipe()
+}
+
+// parsePipe 解析管道 x | f | g(a)，优先级最低。
+// 纯语法糖：在解析期改写成普通调用，VM 无需任何改动。
+//   x | f        =>  f(x)
+//   x | g(a)     =>  g(x, a)      左值插入为第一个实参（借鉴 elixir）
+//   x | obj.m(a) =>  obj.m(x, a)  方法调用同理，this 仍指向 obj
+func (p *Parser) parsePipe() any {
+	left := p.parseLogicalOr()
+
+	for p.cursor < len(p.tokens) && p.current().Type == lexer.OPERATOR && p.current().Value == "|" {
+		p.cursor++
+		right := p.parseLogicalOr()
+		left = pipeRewrite(right, left)
+	}
+
+	return left
+}
+
+// pipeRewrite 把管道右侧改写成带上左值的调用
+func pipeRewrite(right any, left any) any {
+	if list, ok := right.([]any); ok && len(list) > 0 {
+		if head, ok := list[0].(string); ok {
+			switch head {
+			case "method-call":
+				// ["method-call", obj, name, args...] -> 左值插到实参最前
+				out := append([]any{}, list[:3]...)
+				out = append(out, left)
+				out = append(out, list[3:]...)
+				return out
+			case "property":
+				// x | obj.m  等价于  obj.m(x)
+				return []any{"method-call", list[1], list[2], left}
+			default:
+				// 普通调用 [f, args...] -> [f, 左值, args...]
+				out := []any{head, left}
+				out = append(out, list[1:]...)
+				return out
+			}
+		}
+	}
+	// 裸函数名：x | f  =>  f(x)
+	if name, ok := right.(string); ok {
+		return []any{name, left}
+	}
+	panic(fmt.Sprintf("pipe target must be a function name or call, got %v", right))
 }
 
 // parseLogicalOr 解析逻辑或 (||)，短路由 VM 处理
@@ -255,6 +301,21 @@ func (p *Parser) parsePostfix() any {
 			}
 			p.cursor++ // 跳过 ']'
 			left = []any{"index", left, index}
+			continue
+		}
+
+		// 调用括号：把左侧表达式的值当函数调用，
+		// 让 handlers[cmd](x)、f(a)(b)、(fun(){...})() 都成立。
+		// 要求 '(' 与前一个 token 同行，避免把下一行的括号表达式误当成调用。
+		if cur.Value == "(" && p.cursor > 0 && cur.Line == p.tokens[p.cursor-1].Line {
+			p.cursor++ // 跳过 '('
+			node := []any{"call-value", left}
+			for p.current().Value != ")" {
+				node = append(node, p.parseExpression())
+				p.skipComma()
+			}
+			p.cursor++ // 跳过 ')'
+			left = node
 			continue
 		}
 
@@ -442,32 +503,38 @@ func (p *Parser) varAssign() []any {
 	return []any{"assign", target, value}
 }
 
-// parseTable 解析表字面量 { key: value  key2: value2 }（逗号被词法器忽略）
+// parseTable 解析表字面量，两种元素可混用：
+//   键值对  { name: "Gin", 0: "a" }     键可以是标识符 / 字符串 / 整数
+//   数组式  { 10, 20, 30 }              自动用递增数字 0,1,2... 作键
 func (p *Parser) parseTable() []any {
 	p.cursor++ // 跳过 '{'
 	result := []any{"table"}
+	autoIndex := 0 // 数组式元素的自动编号
 
 	for p.current().Value != "}" {
-		// 键：标识符 或 字符串
-		var key any
-		switch p.current().Type {
-		case lexer.IDENTIFIER:
-			// 用引号包裹让 VM 把它当作字符串常量求值
-			key = `"` + p.current().Value + `"`
-			p.cursor++
-		case lexer.STRING:
-			key = p.stringLiteral()
-		default:
-			panic(fmt.Sprintf("table key must be identifier or string, got %+v", p.current()))
-		}
+		cur := p.current()
+		isKeyType := cur.Type == lexer.IDENTIFIER ||
+			cur.Type == lexer.STRING ||
+			cur.Type == lexer.INT
 
-		if p.current().Value != ":" {
-			panic("expected ':' after table key")
+		if isKeyType && p.back().Value == ":" {
+			// 键值对：用引号包裹让 VM 把键当作字符串常量求值
+			var key any
+			if cur.Type == lexer.STRING {
+				key = cur.Value // 本身带引号
+			} else {
+				key = `"` + cur.Value + `"`
+			}
+			p.cursor += 2 // 跳过键和 ':'
+			value := p.parseExpression()
+			result = append(result, key, value)
+		} else {
+			// 数组式元素：自动编号
+			value := p.parseExpression()
+			key := `"` + strconv.Itoa(autoIndex) + `"`
+			autoIndex++
+			result = append(result, key, value)
 		}
-		p.cursor++ // 跳过 ':'
-
-		value := p.parseExpression()
-		result = append(result, key, value)
 		p.skipComma()
 	}
 

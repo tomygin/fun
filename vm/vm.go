@@ -378,6 +378,23 @@ func (vm *VM) Eval(exp any) (any, error) {
 			return nil, fmt.Errorf("cannot index value of type %T", obj)
 		}
 
+		// 值调用：handlers[cmd](x)、f(a)(b)、管道/分发表都靠它
+		if operator == "call-value" {
+			fnValue, err := vm.Eval(expList[1])
+			if err != nil {
+				return nil, err
+			}
+			var args []any
+			for _, arg := range expList[2:] {
+				evalArg, err := vm.Eval(arg)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, evalArg)
+			}
+			return vm.applyFunction(fnValue, args)
+		}
+
 		// Property access
 		if operator == "property" {
 			if len(expList) != 3 {
@@ -750,4 +767,43 @@ func (vm *VM) Eval(exp any) (any, error) {
 	}
 
 	return nil, fmt.Errorf("unknown expression: %v", exp)
+}
+
+// applyFunction 用已求值的参数调用一个函数值（内置 Go 函数或用户函数）
+func (vm *VM) applyFunction(fnValue any, args []any) (any, error) {
+	// 内置函数
+	if fnValue != nil && reflect.TypeOf(fnValue).Kind() == reflect.Func {
+		results := reflect.ValueOf(fnValue).Call(buildReflectArgs(args))
+		if len(results) > 0 {
+			return results[0].Interface(), nil
+		}
+		return nil, nil
+	}
+
+	// 用户定义函数（表形式）
+	if fnMap, ok := fnValue.(map[string]any); ok && isUserFunc(fnMap) {
+		params, _ := fnMap["params"].([]any)
+		body := fnMap["body"]
+
+		kv := make(map[string]any)
+		for i, param := range params {
+			if i < len(args) {
+				kv[param.(string)] = args[i]
+			}
+		}
+
+		parentEnv := vm.env
+		if ce, ok := fnMap["@ClosureEnv"].(*Environment); ok {
+			parentEnv = ce
+		}
+
+		oldEnv := vm.env
+		vm.env = NewEnvironment(kv, parentEnv)
+		result, err := vm.Eval(body)
+		vm.env = oldEnv
+		vm.returning = false // 消费 return 信号，函数边界到此为止
+		return result, err
+	}
+
+	return nil, fmt.Errorf("value of type %s is not callable", typeName(fnValue))
 }

@@ -323,6 +323,39 @@ var interfaceFunctions = map[string]any{
 		}
 		return args[0]
 	},
+	// clone 浅拷贝一张表 —— 面向对象的"实例化"：从原型表复制出实例
+	"clone": func(args ...any) any {
+		if len(args) < 1 {
+			return nil
+		}
+		if m, ok := args[0].(map[string]any); ok {
+			out := make(map[string]any, len(m))
+			for k, v := range m {
+				out[k] = v
+			}
+			return out
+		}
+		return args[0]
+	},
+	// merge 把后面各表的键依次覆盖进第一张表，返回第一张表。
+	// 面向对象的"继承 / mixin"：merge(clone(父类), { 子类字段... })
+	"merge": func(args ...any) any {
+		if len(args) < 1 {
+			return nil
+		}
+		dst, ok := args[0].(map[string]any)
+		if !ok {
+			return args[0]
+		}
+		for _, src := range args[1:] {
+			if m, ok := src.(map[string]any); ok {
+				for k, v := range m {
+					dst[k] = v
+				}
+			}
+		}
+		return dst
+	},
 	// keys 返回表所有键组成的新表（键为 0..n-1），配合 len 可遍历
 	"keys": func(args ...any) any {
 		out := make(map[string]any)

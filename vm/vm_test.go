@@ -357,6 +357,128 @@ func TestCoroutineType(t *testing.T) {
 	}
 }
 
+// ---------- 管道 | ----------
+
+func TestPipeBasic(t *testing.T) {
+	code := `
+	fun double(x) { return x * 2 }
+	fun plus(a, b) { return a + b }
+	5 | double | plus(3)` // (5*2)+3
+	if got := run(t, code); got != 13.0 {
+		t.Errorf("pipe = %v, want 13", got)
+	}
+}
+
+func TestPipeIntoBuiltin(t *testing.T) {
+	if got := run(t, `"fun" | upper`); got != "FUN" {
+		t.Errorf(`"fun" | upper = %v, want FUN`, got)
+	}
+}
+
+func TestPipeIntoMethod(t *testing.T) {
+	code := `
+	obj := { wrap: fun(s) { return "[" + s + "]" } }
+	"x" | obj.wrap`
+	if got := run(t, code); got != "[x]" {
+		t.Errorf("pipe into method = %v, want [x]", got)
+	}
+}
+
+// ---------- 值调用（下标/表达式结果直接调用）----------
+
+func TestCallValueFromIndex(t *testing.T) {
+	code := `
+	handlers := { hi: fun(n) { return "hi " + n } }
+	cmd := "hi"
+	handlers[cmd]("gin")`
+	if got := run(t, code); got != "hi gin" {
+		t.Errorf("handlers[cmd](x) = %v, want hi gin", got)
+	}
+}
+
+func TestCallValueCurried(t *testing.T) {
+	code := `
+	fun adder(a) { return fun(b) { return a + b } }
+	adder(3)(4)`
+	if got := run(t, code); got != 7.0 {
+		t.Errorf("adder(3)(4) = %v, want 7", got)
+	}
+}
+
+// ---------- 完整 OOP：clone / merge / 继承 / 多态 / super ----------
+
+func TestArrayLiteral(t *testing.T) {
+	code := `arr := { 10, 20, 30 }  arr[0] + arr[2] * len(arr)`
+	if got := run(t, code); got != 100.0 { // 10 + 30*3
+		t.Errorf("array literal = %v, want 100", got)
+	}
+}
+
+func TestCloneIsIndependent(t *testing.T) {
+	code := `
+	proto := { v: 1 }
+	a := clone(proto)
+	a.v = 99
+	proto.v`
+	if got := run(t, code); got != 1 {
+		t.Errorf("proto.v = %v, want 1 (clone 应独立)", got)
+	}
+}
+
+func TestInheritanceOverride(t *testing.T) {
+	code := `
+	Animal := {
+		init:  fun(n) { this.name = n  return this },
+		speak: fun() { return this.name + ": ..." }
+	}
+	Dog := merge(clone(Animal), {
+		speak: fun() { return this.name + ": 汪" }
+	})
+	clone(Dog).init("旺财").speak()`
+	if got := run(t, code); got != "旺财: 汪" {
+		t.Errorf("override = %v, want 旺财: 汪", got)
+	}
+}
+
+func TestSuperLateBinding(t *testing.T) {
+	// 父类方法挂到子类字段上，this 依旧晚绑定到实例
+	code := `
+	Animal := {
+		init:  fun(n) { this.name = n  return this },
+		speak: fun() { return this.name + ": base" }
+	}
+	Dog := merge(clone(Animal), {
+		superSpeak: Animal.speak,
+		speak: fun() { return this.superSpeak() + "+dog" }
+	})
+	clone(Dog).init("d").speak()`
+	if got := run(t, code); got != "d: base+dog" {
+		t.Errorf("super = %v, want d: base+dog", got)
+	}
+}
+
+func TestMixin(t *testing.T) {
+	code := `
+	A := { a: fun() { return 1 } }
+	B := { b: fun() { return 2 } }
+	C := merge(clone(A), B)
+	C.a() + C.b()`
+	if got := run(t, code); got != 3.0 {
+		t.Errorf("mixin = %v, want 3", got)
+	}
+}
+
+func TestMethodChainingLong(t *testing.T) {
+	code := `
+	fun box() {
+		return { v: 0, add: fun(n) { this.v = this.v + n  return this } }
+	}
+	box().add(1).add(2).add(3).v`
+	if got := run(t, code); got != 6.0 {
+		t.Errorf("chain = %v, want 6", got)
+	}
+}
+
 // runInDir 在指定目录下求值代码（供 import 测试解析相对路径）
 func runInDir(t *testing.T, dir, code string) any {
 	t.Helper()

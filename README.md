@@ -36,8 +36,12 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
   真值/短路逻辑的味道来自 Python。
 - **一种数据结构，无穷用法**：`{ }` 表借鉴自 Lua，既是记录（结构体）、
   数组，也是函数容器和对象 —— 一种结构撑起全部。
-- **函数是一等公民**：支持匿名函数、闭包、递归、相互递归；把函数放进表
-  就得到方法，方法里的 `this` 指向对象自身，读写字段即可实现 OOP。
+- **函数是一等公民**：支持匿名函数、闭包、递归、相互递归、柯里化调用
+  `f(a)(b)`；把函数放进表就得到方法，方法里的 `this` 指向对象自身。
+- **完整的面向对象**：不加一个关键字，`clone` + `merge` + `this` 就凑齐了
+  类、实例、构造器、继承、重写、多态、super、mixin 和闭包私有成员。
+- **管道 `|`**：`x | f | g(a)` 让数据从左流向右，纯语法糖，解析期改写成
+  普通调用（借鉴 elixir）。
 - **协程**：借鉴 lua 的 `coroutine` / `resume` / `yield`，可写生成器、
   做协作式调度（基于宿主 goroutine，协作式切换）。
 - **多文件编程**：`import("x.fun")` 把一个文件当模块加载，模块就是一张
@@ -90,6 +94,9 @@ print("hello, " + "fn")
 // 逻辑：&& || !（&& 和 || 会短路，并返回决定结果的操作数）
 ok := true && !false
 port := 0 || 8080     // 返回 8080
+
+// 管道：x | f 即 f(x)，优先级最低（详见"管道"一节）
+print(5 | double | plus(3))
 ```
 
 ### 分支
@@ -181,16 +188,15 @@ user.age = 19             // 属性赋值
 user["city"] = "Hangzhou" // 下标赋值（动态新增字段）
 ```
 
-**2) 当作数组（数字下标 + `len` + `for` 遍历）**
+**2) 当作数组（数组式字面量 + 数字下标 + `len` + `for` 遍历）**
 
 ```js
-arr := {}
-for i := 0; i < 5; i++ {
-    arr[i] = i * i
-}
+arr := { 10, 20, 30 }        // 数组式字面量，自动编号 0,1,2...
+arr[3] = 40                  // 追加
 for i := 0; i < len(arr); i++ {
     print(arr[i])
 }
+mixed := { "a", "b", name: "Gin" }   // 数组元素和键值对还能混写
 ```
 
 **3) 把函数放进表**
@@ -244,6 +250,100 @@ c := Counter(10)
 c.inc()
 c.inc()
 print(c.value())           // 12
+```
+
+### 完整的面向对象
+
+不需要 `class` 关键字 —— `clone`（实例化）、`merge`（继承/mixin）加上
+`this`，就凑齐了一门 OOP 语言的全部要素。（完整演示见
+[`__example/oop.fun`](__example/oop.fun)）
+
+```js
+// 类 = 一张放着方法的原型表
+Animal := {
+    init:  fun(name) { this.name = name  return this },
+    speak: fun() { print(this.name, ": ...") }
+}
+
+// 实例化 = clone；构造 = init 返回 this，可一行链完
+cat := clone(Animal).init("小猫")
+
+// 继承 = merge(clone(父类), { 覆盖与新增... })
+Dog := merge(clone(Animal), {
+    speak: fun() { print(this.name, ": 汪汪") },      // 重写
+    fetch: fun() { print(this.name, "叼回飞盘")  return this }
+})
+dog := clone(Dog).init("旺财")
+
+// 多态：同一条消息，各自的行为（鸭子类型）
+animals := { cat, dog }
+for i := 0; i < len(animals); i++ { animals[i].speak() }
+
+// super：把父类方法挂到子类字段上，this 依旧晚绑定到实例
+Puppy := merge(clone(Dog), {
+    superSpeak: Animal.speak,
+    speak: fun() { this.superSpeak()  print("（奶声奶气）") }
+})
+
+// mixin 多继承：能力就是表，merge 几张继承几种
+CanSwim := { swim: fun() { print(this.name, "游泳")  return this } }
+CanFly  := { fly:  fun() { print(this.name, "起飞")  return this } }
+Duck := merge(clone(Animal), CanSwim, CanFly)
+
+// 链式调用：方法返回 this 即可
+clone(Duck).init("唐老鸭").swim().fly()
+
+// 运行时改类：类只是表，随时打补丁
+Animal.sleep = fun() { print(this.name, "睡了") }
+```
+
+### 管道 `|`
+
+`x | f` 就是 `f(x)`；`x | g(a)` 就是 `g(x, a)` —— 左值插为第一个实参
+（借鉴 elixir）。纯语法糖，解析期改写成普通调用。
+
+```js
+fun double(x) { return x * 2 }
+fun plus(a, b) { return a + b }
+
+print(5 | double | plus(3))       // 13
+print("fun" | upper)              // FUN
+print(3.7 | str | len)            // 3
+print("wow" | obj.emphasize)      // 也能流进方法，this 照常绑定
+
+// 配合高阶函数就是声明式数据流水线
+result := nums
+    | filterT(fun(x) { return x % 2 != 0 })
+    | mapT(fun(x) { return x * x })
+    | sumT
+```
+
+### `{ }` 的魔法
+
+函数是值、表是唯一容器、值可直接调用（`handlers[cmd](x)`、`f(a)(b)`），
+组合起来能做不少其他语言要动语法才能做的事。（完整演示见
+[`__example/magic.fun`](__example/magic.fun)）
+
+```js
+// 分发表：用表替代 switch/case，分支可运行时热插拔
+handlers := {
+    start: fun(who) { print(who, "启动") },
+    stop:  fun(who) { print(who, "停止") }
+}
+handlers["start"]("Gin")                       // 取出即调用
+handlers["dance"] = fun(who) { print(who, "跳舞") }   // 热插新分支
+
+// 几行代码的发布/订阅事件系统（见 magic.fun 第 4 节）
+bus.on("login", fun(u) { print("欢迎", u) })
+   .on("login", fun(u) { print("记日志", u) })
+bus.emit("login", "Gin")
+
+// 配置即代码：嵌套表 + 函数值描述一切
+app := {
+    port: 8080,
+    routes: { hello: fun(w) { return "hello, " + w } },
+    check: fun() { return this.port > 0 && this.port < 65536 }
+}
 ```
 
 ### 协程
@@ -313,6 +413,8 @@ print(has(stack, "helper"))      // false（没导出）
 | `str(x)` / `num(x)` / `bool(x)` | 类型转换 |
 | `keys(t)` | 返回表所有键组成的新表（配合 `len` 遍历） |
 | `has(t, k)` / `del(t, k)` | 键是否存在 / 删除键 |
+| `clone(t)` | 浅拷贝一张表（OOP 的"实例化"） |
+| `merge(dst, src...)` | 把后面各表的键依次覆盖进第一张表（OOP 的"继承 / mixin"） |
 | `upper(s)` / `lower(s)` | 字符串大小写转换 |
 | `assert(cond, msg)` | 断言，失败则报错 |
 | `input(prompt)` | 从标准输入读取一行 |
@@ -355,6 +457,8 @@ print(has(stack, "helper"))      // false（没导出）
     ├── fibonaci.fun   递归：斐波那契
     ├── this.fun       用 this 构造对象
     ├── objects.fun    表 { } 的灵活性：记录 / 数组 / 方法 / 对象
+    ├── oop.fun        完整面向对象：继承 / 多态 / super / mixin / 封装
+    ├── magic.fun      管道 | / 分发表 / 事件系统 / 数据流水线
     ├── coroutine.fun  协程：生成器 / 双向通信 / 协作式调度
     ├── module.fun     多文件编程：导入 pkg/ 下的模块
     ├── pkg/           被导入的模块（mathlib.fun / stack.fun）
