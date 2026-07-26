@@ -34,10 +34,10 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
   任何一门你熟悉的语言都能照着重写一遍。
 - **语法混血**：`:=` 声明来自 Go，`for` 是唯一的循环关键字（同样来自 Go），
   真值/短路逻辑的味道来自 Python。
-- **一种数据结构**：`{ }` 表借鉴自 Lua，既当记录（结构体）又当数组，
-  也是"对象"和多文件编程的基础。
-- **函数是一等公民**：支持闭包、递归、相互递归；`return this` 就能把当前
-  作用域打包成一个带方法的对象。
+- **一种数据结构，无穷用法**：`{ }` 表借鉴自 Lua，既是记录（结构体）、
+  数组，也是函数容器和对象 —— 一种结构撑起全部。
+- **函数是一等公民**：支持匿名函数、闭包、递归、相互递归；把函数放进表
+  就得到方法，方法里的 `this` 指向对象自身，读写字段即可实现 OOP。
 
 ## 运行
 
@@ -148,42 +148,98 @@ fun isOdd(n) {
 }
 ```
 
-### 闭包与对象
+### 匿名函数（函数是值）
 
-函数会捕获定义时的环境形成闭包；`return this` 把当前作用域打包成一张表，
-这就是 Fun 里的"对象"：
+`fun(args){ ... }` 是一个表达式，可以赋值、当参数、当返回值，也可以放进表里：
 
 ```js
-fun Counter(start) {
-    count := start
-    fun inc() { count = count + 1  return count }
-    fun value() { return count }
-    return this
-}
+inc := fun(x) { return x + 1 }
+print(inc(41))                 // 42
 
-c := Counter(10)
-c.inc()
-c.inc()
-print(c.value())      // 12
+// 高阶函数
+fun apply(f, x) { return f(x) }
+print(apply(fun(n) { return n * n }, 9))   // 81
 ```
 
 ### 表：唯一的数据结构
 
+`{ }` 是 Fun 里唯一的复合类型，但它非常灵活 —— 记录、数组、函数容器、对象，
+全靠它。（完整演示见 [`__example/objects.fun`](__example/objects.fun)）
+
+**1) 当作记录 / 结构体**
+
 ```js
-// 当作记录 / 结构体
 user := { name: "Gin", age: 18, langs: { first: "go" } }
 print(user.name)          // 属性访问
 print(user["age"])        // 下标访问
 print(user.langs.first)   // 支持嵌套
 user.age = 19             // 属性赋值
-user["city"] = "Hangzhou" // 下标赋值（新增字段）
+user["city"] = "Hangzhou" // 下标赋值（动态新增字段）
+```
 
-// 当作数组：用数字下标
+**2) 当作数组（数字下标 + `len` + `for` 遍历）**
+
+```js
 arr := {}
 for i := 0; i < 5; i++ {
     arr[i] = i * i
 }
-print(len(arr))           // 5
+for i := 0; i < len(arr); i++ {
+    print(arr[i])
+}
+```
+
+**3) 把函数放进表**
+
+```js
+fun square(x) { return x * x }
+t := {
+    square: square,                          // 具名函数
+    cube:   fun(x) { return x * x * x }       // 匿名函数
+}
+print(t.square(4), t.cube(3))                // 16 27
+```
+
+### 用 this 实现对象
+
+表里的函数就是"方法"：用 `obj.method()` 调用时，方法内的 `this` 指向
+`obj` 这张表本身，因此能读写自己的字段。这是 Fun 的对象模型。
+
+```js
+// 构造器：返回一张带方法的表
+fun newAccount(owner, balance) {
+    return {
+        owner: owner,
+        balance: balance,
+        deposit: fun(n) {
+            this.balance = this.balance + n   // this 指向被调用的这张表
+            return this.balance
+        },
+        show: fun() { print(this.owner, "的余额:", this.balance) }
+    }
+}
+
+acc := newAccount("Gin", 100)
+acc.deposit(50)
+acc.show()                 // Gin 的余额: 150
+// 每次调用 newAccount 得到独立实例，状态互不影响
+```
+
+`this` 还有另一种玩法：在普通函数里（不是方法调用），`this` 会把当前作用域
+打包成一张表。配合闭包，就能把状态藏在私有变量里：
+
+```js
+fun Counter(start) {
+    count := start                            // 私有状态，外部访问不到
+    fun inc() { count = count + 1  return count }
+    fun value() { return count }
+    return this                               // 打包 inc / value 成对象
+}
+
+c := Counter(10)
+c.inc()
+c.inc()
+print(c.value())           // 12
 ```
 
 ### 内置函数
@@ -229,5 +285,6 @@ print(len(arr))           // 5
     ├── base.fun       基础语法
     ├── fibonaci.fun   递归：斐波那契
     ├── this.fun       用 this 构造对象
+    ├── objects.fun    表 { } 的灵活性：记录 / 数组 / 方法 / 对象
     └── showcase.fun   特性总览（推荐从这里开始）
 ```

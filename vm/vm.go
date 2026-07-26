@@ -233,8 +233,17 @@ func (vm *VM) Eval(exp any) (any, error) {
 		return exp, nil
 	}
 
-	// this keyword - 返回当前环境的本地变量（跳过 @ 开头的内部变量）
+	// this keyword
 	if exp == "this" {
+		// 若在方法调用中（obj.method()），this 就是被调用的那张表本身，
+		// 返回真实引用，因此 this.field = x 会改到原对象上。
+		if self, err := vm.env.Lookup("@self"); err == nil {
+			if selfMap, ok := self.(map[string]any); ok {
+				return selfMap, nil
+			}
+		}
+		// 否则（普通函数里）this 返回当前作用域的快照，
+		// 配合 return this 可以把整个作用域打包成一张对象表。
 		thisObj := make(map[string]any)
 		for k, v := range vm.env.local {
 			if len(k) > 0 && k[0] == '@' {
@@ -410,6 +419,9 @@ func (vm *VM) Eval(exp any) (any, error) {
 								kv[param.(string)] = args[i]
 							}
 						}
+						// 绑定接收者：方法内用 this 就能访问被调用的这张表本身
+						// （这样表里的函数就是真正的"方法"，可读写 this.field）
+						kv["@self"] = objMap
 
 						// 如果函数有闭包环境，则使用闭包环境作为父环境
 						var parentEnv *Environment
@@ -604,6 +616,21 @@ func (vm *VM) Eval(exp any) (any, error) {
 				"@ClosureEnv": vm.env,
 			}
 			return vm.env.Set(name, fn), nil
+		}
+
+		// Anonymous function（可放进表当方法、作为参数或返回值）
+		if operator == "fun-expr" {
+			if len(expList) != 3 {
+				return nil, fmt.Errorf("fun-expr requires exactly 2 arguments")
+			}
+			params := expList[1].([]any)
+			body := expList[2]
+			fn := map[string]any{
+				"params":      params,
+				"body":        body,
+				"@ClosureEnv": vm.env,
+			}
+			return fn, nil
 		}
 
 		// Function call

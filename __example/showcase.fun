@@ -91,10 +91,22 @@ fun isOdd(n) {
 print("isEven(10) = ", isEven(10))
 print("isOdd(10)  = ", isOdd(10))
 
-print("========== 6. 闭包与对象 (this) ==========")
+print("========== 6. 对象 (this) ==========")
 
-// 函数捕获定义时的环境形成闭包；
-// return this 会把当前作用域打包成一张表 —— 这就是 Fn 里的"对象"。
+// 风格一：把匿名函数放进表当方法，this 指向表本身，读写自己的字段
+fun newAccount(owner, balance) {
+    return {
+        owner: owner,
+        balance: balance,
+        deposit: fun(n) { this.balance = this.balance + n  return this.balance },
+        show: fun() { print("  ", this.owner, "的余额:", this.balance) }
+    }
+}
+acc := newAccount("Gin", 100)
+acc.deposit(50)
+acc.show()
+
+// 风格二：return this 打包闭包，把状态藏进私有变量
 fun Counter(start) {
     count := start
     fun inc() {
@@ -106,12 +118,12 @@ fun Counter(start) {
     }
     return this
 }
-
 c := Counter(10)
 c.inc()
 c.inc()
 c.inc()
-print("counter value = ", c.value())
+print("  counter value = ", c.value())
+// 更完整的表/对象玩法见 __example/objects.fun
 
 print("========== 7. 表：唯一的数据结构 ==========")
 
