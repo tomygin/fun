@@ -6,6 +6,7 @@ import (
 	"fun/parser"
 	"fun/vm"
 	"os"
+	"path/filepath"
 )
 
 func main() {
@@ -23,7 +24,11 @@ func main() {
 	tokens := lexer.NewLexer().Tokenize(string(source))
 	ast := parser.NewParser().Parse(tokens)
 
-	if _, err := vm.NewVM().Call(ast); err != nil {
+	machine := vm.NewVM()
+	// import 的相对路径以入口文件所在目录为基准
+	machine.SetDir(filepath.Dir(os.Args[1]))
+
+	if _, err := machine.Call(ast); err != nil {
 		panic(err)
 	}
 

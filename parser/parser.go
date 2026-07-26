@@ -192,7 +192,7 @@ func (p *Parser) parseUnary() any {
 		operand := p.parseUnary()
 		if cur.Value == "-" {
 			// -x 等价于 0 - x
-			return []any{"sub", 0, operand}
+			return []any{"@sub", 0, operand}
 		}
 		return operand
 	}
@@ -310,20 +310,22 @@ func (p *Parser) parsePrimary() any {
 	panic(fmt.Sprintf("unexpected token in expression: %+v", p.current()))
 }
 
-// convertOperator 转换操作符
+// convertOperator 把符号运算符转成内置函数名。
+// 名字统一加 @ 前缀，放进用户取不到的命名空间，
+// 这样即使用户把函数命名为 add / sub 等也不会覆盖 + / - 运算。
 func (p *Parser) convertOperator(op string) string {
 	convertMap := map[string]string{
-		"*":  "mul",
-		"/":  "div",
-		"%":  "mod",
-		"-":  "sub",
-		"+":  "add",
-		">":  "gt",
-		"<":  "lt",
-		">=": "gte",
-		"<=": "lte",
-		"==": "eq",
-		"!=": "neq",
+		"*":  "@mul",
+		"/":  "@div",
+		"%":  "@mod",
+		"-":  "@sub",
+		"+":  "@add",
+		">":  "@gt",
+		"<":  "@lt",
+		">=": "@gte",
+		"<=": "@lte",
+		"==": "@eq",
+		"!=": "@neq",
 	}
 
 	if converted, ok := convertMap[op]; ok {
@@ -687,7 +689,7 @@ func (p *Parser) returnStatement() []any {
 func (p *Parser) selfAddSugar() []any {
 	value := p.current().Value
 	p.cursor += 2
-	return []any{"assign", value, []any{"add", value, 1}}
+	return []any{"assign", value, []any{"@add", value, 1}}
 }
 
 // expressionSugar 表达式语法糖（括号表达式）

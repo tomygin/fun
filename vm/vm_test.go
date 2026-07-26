@@ -4,6 +4,8 @@ import (
 	"fun/lexer"
 	"fun/parser"
 	"fun/vm"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -284,5 +286,117 @@ func TestBuiltins(t *testing.T) {
 func TestStringIndex(t *testing.T) {
 	if got := run(t, `s := "hello"  s[1]`); got != "e" {
 		t.Errorf("s[1] = %v, want e", got)
+	}
+}
+
+// TestOperatorNameNotShadowed 用户函数命名为 add 不应覆盖 + 运算
+func TestOperatorNameNotShadowed(t *testing.T) {
+	code := `
+	fun add(a, b) { return a + b + 1 }
+	add(2, 3) + (2 + 3)`
+	if got := run(t, code); got != 11.0 { // (2+3+1) + (2+3) = 6 + 5
+		t.Errorf("got %v, want 11", got)
+	}
+}
+
+func TestCoroutineYield(t *testing.T) {
+	code := `
+	fun gen() {
+		yield(1)
+		yield(2)
+		return 3
+	}
+	co := coroutine(gen)
+	a := resume(co)
+	b := resume(co)
+	c := resume(co)
+	a + b * 10 + c * 100`
+	if got := run(t, code); got != 321.0 {
+		t.Errorf("coroutine yields = %v, want 321", got)
+	}
+}
+
+func TestCoroutineStatus(t *testing.T) {
+	code := `
+	fun gen() { yield(1) }
+	co := coroutine(gen)
+	before := costatus(co)
+	resume(co)
+	mid := costatus(co)
+	resume(co)
+	after := costatus(co)
+	before + "," + mid + "," + after`
+	if got := run(t, code); got != "suspended,suspended,dead" {
+		t.Errorf("status = %v, want suspended,suspended,dead", got)
+	}
+}
+
+func TestCoroutineTwoWay(t *testing.T) {
+	// yield 的返回值来自下一次 resume 的参数
+	code := `
+	fun adder() {
+		x := yield(0)
+		y := yield(x)
+		return x + y
+	}
+	co := coroutine(adder)
+	resume(co)          // 跑到第一个 yield
+	resume(co, 10)      // x = 10, 跑到第二个 yield
+	resume(co, 20)      // y = 20, 返回 x + y`
+	if got := run(t, code); got != 30.0 {
+		t.Errorf("two-way coroutine = %v, want 30", got)
+	}
+}
+
+func TestCoroutineType(t *testing.T) {
+	code := `
+	fun g() { yield(1) }
+	type(coroutine(g))`
+	if got := run(t, code); got != "coroutine" {
+		t.Errorf("type = %v, want coroutine", got)
+	}
+}
+
+// runInDir 在指定目录下求值代码（供 import 测试解析相对路径）
+func runInDir(t *testing.T, dir, code string) any {
+	t.Helper()
+	tokens := lexer.NewLexer().Tokenize(code)
+	ast := parser.NewParser().Parse(tokens)
+	machine := vm.NewVM()
+	machine.SetDir(dir)
+	result, err := machine.Call(ast)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	return result
+}
+
+func TestModuleImplicitExport(t *testing.T) {
+	dir := t.TempDir()
+	// 模块：顶层定义的名字都被导出（add 命名也不会破坏 + 运算）
+	mod := "PI := 3\nfun add(a, b) { return a + b }\n"
+	if err := os.WriteFile(filepath.Join(dir, "math.fun"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := `m := import("math.fun")  m.add(m.PI, 4)`
+	if got := runInDir(t, dir, code); got != 7.0 {
+		t.Errorf("m.add(m.PI, 4) = %v, want 7", got)
+	}
+}
+
+func TestModuleExplicitExport(t *testing.T) {
+	dir := t.TempDir()
+	// 显式导出：只暴露 return 的表，secret 不外泄
+	mod := "secret := 42\nfun pub() { return 1 }\nreturn { pub: pub }\n"
+	if err := os.WriteFile(filepath.Join(dir, "m.fun"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := `m := import("m")  has(m, "secret")`
+	if got := runInDir(t, dir, code); got != false {
+		t.Errorf("has(m, secret) = %v, want false", got)
+	}
+	code2 := `m := import("m")  m.pub()`
+	if got := runInDir(t, dir, code2); got != 1 { // return 1 是整数字面量
+		t.Errorf("m.pub() = %v, want 1", got)
 	}
 }
