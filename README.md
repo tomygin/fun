@@ -1,6 +1,6 @@
 # Fun
 
-一门比 Lua 还小的编程语言 —— 实现约 3,500 行 Go（加测试约 4,300 行），语法借鉴 Go 与 Python，
+一门比 Lua 还小的编程语言 —— 实现约 3,600 行 Go（加测试约 4,500 行），语法借鉴 Go 与 Python，
 唯一的数据结构 `{ }` 借鉴 Lua。
 
 ## 介绍
@@ -25,11 +25,11 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
 
 还在递归更新中 ...
 
-总之，这是一门比 lua 还小的语言，实现目前约 3,500 行 Go 代码（源码加测试约 4,300 行），希望你玩得开心。
+总之，这是一门比 lua 还小的语言，实现目前约 3,600 行 Go 代码（源码加测试约 4,500 行），希望你玩得开心。
 
 ## 语言特色
 
-- **极小**：词法 + 语法 + 数字塔 + 解释器约 3,500 行 Go 代码，一天能读完。
+- **极小**：词法 + 语法 + 数字塔 + 解释器约 3,600 行 Go 代码，一天能读完。
 - **语言无关**：前端正则取词 → 左递归构建 s-expression → Lisp 方言解释器，
   任何一门你熟悉的语言都能照着重写一遍。
 - **语法混血**：`:=` 声明来自 Go，`for` 是唯一的循环关键字（同样来自 Go），
@@ -57,6 +57,9 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
 - **HTTP 与 JSON 内置**：`http.get` / `http.post` 发请求，`http.serve`
   几行起一个服务器 —— 路由是表、请求是表、处理函数就是 Fun 闭包；
   `json.encode` / `json.decode` 让表和 JSON 互转（小数依然精确）。
+- **错误处理零语法**：`throw(v)` 抛任意值，`try(fn, args...)` 返回
+  `{ ok, value / error }` 结果表（借鉴 lua 的 pcall 与 elixir 的结果
+  元组）—— 和 http 响应同构，全语言一种判错姿势。
 
 ## 运行
 
@@ -581,9 +584,54 @@ http.serve(":8080", routes)          // 前台阻塞；http.listen 则后台启�
 - 处理函数是真正的 Fun 闭包，能读写脚本里的变量；Go 服务器并发进来的
   请求会**串行**进入解释器（Fun 是单线程协作式的）。
 
-**JSON**：`json.encode(v)` / `json.decode(s)` 在表和 JSON 之间互转。
-连续数字键 `0..n-1` 的表编码成 JSON 数组，其余编码成对象；解码时数字
-走数字塔 —— `json.decode('{"x":0.1}').x + 0.2 == 0.3` 依然为真。
+**JSON**：`json.encode(v [, indent])` / `json.decode(s)` 在表和 JSON
+之间互转。连续数字键 `0..n-1` 的表编码成 JSON 数组，其余编码成对象；
+解码时数字走数字塔 —— `json.decode('{"x":0.1}').x + 0.2 == 0.3` 依然为真。
+
+```js
+json.encode({ name: "Gin" }, 2)     // 第二参数：缩进空格数（美化输出）
+r := try(json.decode, badInput)     // 非法 JSON 会抛错，用 try 接住
+// 合法的 "null" 解码为 nil（r.ok 为 true）—— 与解析失败明确区分
+```
+
+### 错误处理：throw / try
+
+不新增任何语法（参考 lua 的 `pcall`/`error` 与 elixir 的结果元组）：
+**错误就是值，捕获就是函数调用**。（完整演示见
+[`__example/error.fun`](__example/error.fun)）
+
+```js
+// throw(v) 抛出任意值：字符串、带结构的表 …… 都行
+fun withdraw(balance, n) {
+    if n > balance { throw("余额不足") }
+    return balance - n
+}
+
+// try(fn, args...) 调用并捕获，返回结果表：
+//   成功 -> { ok: true,  value: 返回值 }
+//   失败 -> { ok: false, error: 错误值 }
+r := try(withdraw, 100, 500)
+if r.ok { print(r.value) } else { print("失败:", r.error) }
+
+// try + 匿名函数 = 不用新语法的 "try 块"
+r := try(fun() {
+    data := json.decode(input)      // 坏 JSON 会抛错
+    return data.user.name
+})
+
+// 结构化错误
+throw({ code: 404, msg: "not found" })   // 捕获后 r.error.code == 404
+```
+
+规则一览：
+
+- **运行时错误同样被捕获**：未定义变量、调用不可调用的值、访问非表的
+  属性、`assert` 失败 …… 错误值是描述字符串。
+- **错误沿调用栈穿透**，直到最近的 `try`；没有 `try` 就冒泡到顶层，
+  解释器打印 `未捕获的错误: ...` 后以退出码 1 结束（没有宿主堆栈）。
+- 结果表与 http 响应 `{ ok, ... }` **同构**，全语言一种判错姿势。
+- `throw` 和 `try` 都是普通函数值：可以放进表、当参数传（`throw` 甚至
+  能直接当回调用来"必失败"）。
 
 ### 内置函数
 
@@ -598,13 +646,14 @@ http.serve(":8080", routes)          // 前台阻塞；http.listen 则后台启�
 | `clone(t)` | 浅拷贝一张表（OOP 的"实例化"） |
 | `merge(dst, src...)` | 把后面各表的键依次覆盖进第一张表并返回它（OOP 的"继承 / mixin"）。**优先级：越靠后的表越高** —— `merge(a, b, c)` 中同名键 c 覆盖 b、b 覆盖 a，以最后出现的为准 |
 | `upper(s)` / `lower(s)` | 字符串大小写转换 |
-| `assert(cond, msg)` | 断言，失败则报错 |
+| `assert(cond, msg)` | 断言，失败抛出错误（可被 `try` 捕获） |
 | `input(prompt)` | 从标准输入读取一行 |
 | `now()` | 当前时间 |
 | `import(path)` | 加载一个 `.fun` 模块，返回其导出表 |
 | `coroutine(fn)` / `resume(co, ...)` / `yield(v)` / `costatus(co)` | 协程原语 |
 | `http.get/post/request/serve/listen` | HTTP 客户端与服务端（见"HTTP 与 JSON"） |
-| `json.encode(v)` / `json.decode(s)` | 表 <-> JSON（数字走数字塔，小数精确） |
+| `json.encode(v [, indent])` / `json.decode(s)` | 表 <-> JSON（数字精确；`decode` 失败抛错） |
+| `throw(v)` / `try(fn, args...)` | 错误处理：抛出任意值 / 捕获并返回 `{ ok, value / error }` |
 | `VERSION` | 版本号常量 |
 
 完整可运行的示例见 [`__example/showcase.fun`](__example/showcase.fun)。
@@ -646,7 +695,8 @@ http.serve(":8080", routes)          // 前台阻塞；http.listen 则后台启�
 │   ├── module.go      多文件编程：import / 导出
 │   ├── coroutine.go   协程：coroutine / resume / yield
 │   ├── http.go        HTTP 客户端与服务端
-│   └── json.go        表 <-> JSON
+│   ├── json.go        表 <-> JSON
+│   └── error.go       错误处理：throw / try
 └── __example/         示例代码
     ├── base.fun       基础语法
     ├── fibonaci.fun   递归：斐波那契
@@ -657,6 +707,7 @@ http.serve(":8080", routes)          // 前台阻塞；http.listen 则后台启�
     ├── meta.fun       元编程 @ 空间 / 字符串转义 / 模板字符串 / 真值规则
     ├── precision.fun  数字精度：0.1+0.2==0.3 / 溢出提升 / 精确除法
     ├── http.fun       HTTP 服务器 + 客户端 + JSON
+    ├── error.fun      错误处理：throw / try / 结构化错误
     ├── coroutine.fun  协程：生成器 / 双向通信 / 协作式调度
     ├── module.fun     多文件编程：导入 pkg/ 下的模块
     ├── pkg/           被导入的模块（mathlib.fun / stack.fun）
