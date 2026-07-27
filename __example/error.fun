@@ -54,6 +54,9 @@ print("非法访问:", r.error)
 r = try(fun() { assert(1 > 2, "1 竟然不大于 2") })
 print("断言失败:", r.error)
 
+r = try(fun() { return 1 / 0 })
+print("除以零:", r.error)
+
 print("========== 5. 错误穿透调用栈，直到最近的 try ==========")
 
 fun layer3() { throw("最深处") }

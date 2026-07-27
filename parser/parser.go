@@ -82,6 +82,10 @@ func (p *Parser) work() any {
 		case "if":
 			return p.ifStatement()
 		case "fun":
+			// fun( 开头是匿名函数表达式，fun name( 才是具名定义
+			if p.back().Value == "(" {
+				return p.parseExpression()
+			}
 			return p.defStatement()
 		case "return":
 			return p.returnStatement()
@@ -336,8 +340,8 @@ func (p *Parser) parsePrimary() any {
 	case lexer.STRING:
 		return p.stringLiteral()
 	case lexer.IDENTIFIER:
-		// 函数调用
-		if p.back().Value == "(" {
+		// 函数调用（'(' 必须与函数名同行，避免把下一行的括号表达式误当调用）
+		if p.back().Value == "(" && p.back().Line == p.current().Line {
 			return p.varCall()
 		}
 		// 变量
