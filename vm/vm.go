@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ----------------------------------------------------------------------------
@@ -262,16 +263,23 @@ type VM struct {
 	modules map[string]any
 	// current 指向当前正在运行的协程（yield 用它找到对应的通道）。
 	current *Coroutine
+	// httpMu 串行化 http 处理函数：Go 服务器并发进来，解释器单线程跑。
+	httpMu sync.Mutex
 }
 
 func NewVM() *VM {
 	env := NewEnvironment(interfaceFunctions, nil)
-	return &VM{
+	vm := &VM{
 		env:     env,
 		global:  env,
 		dir:     ".",
 		modules: make(map[string]any),
 	}
+	// http 需要回调解释器（server 处理函数是 Fun 函数），按 VM 绑定；
+	// json 是纯函数表。两者都是"模块即表"哲学的内置版。
+	env.Set("http", vm.httpTable())
+	env.Set("json", jsonTable)
+	return vm
 }
 
 // SetDir 设置入口文件所在目录，作为 import 相对路径的基准。

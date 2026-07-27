@@ -1,6 +1,6 @@
 # Fun
 
-一门比 Lua 还小的编程语言 —— 实现约 3,000 行 Go（加测试约 3,800 行），语法借鉴 Go 与 Python，
+一门比 Lua 还小的编程语言 —— 实现约 3,500 行 Go（加测试约 4,300 行），语法借鉴 Go 与 Python，
 唯一的数据结构 `{ }` 借鉴 Lua。
 
 ## 介绍
@@ -25,11 +25,11 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
 
 还在递归更新中 ...
 
-总之，这是一门比 lua 还小的语言，实现目前约 3,000 行 Go 代码（源码加测试约 3,800 行），希望你玩得开心。
+总之，这是一门比 lua 还小的语言，实现目前约 3,500 行 Go 代码（源码加测试约 4,300 行），希望你玩得开心。
 
 ## 语言特色
 
-- **极小**：词法 + 语法 + 数字塔 + 解释器约 3,000 行 Go 代码，一天能读完。
+- **极小**：词法 + 语法 + 数字塔 + 解释器约 3,500 行 Go 代码，一天能读完。
 - **语言无关**：前端正则取词 → 左递归构建 s-expression → Lisp 方言解释器，
   任何一门你熟悉的语言都能照着重写一遍。
 - **语法混血**：`:=` 声明来自 Go，`for` 是唯一的循环关键字（同样来自 Go），
@@ -54,6 +54,9 @@ Fun 的实现思路,前端使用正则表达式提取token,然后左递归实现
   做协作式调度（基于宿主 goroutine，协作式切换）。
 - **多文件编程**：`import("x.fun")` 把一个文件当模块加载，模块就是一张
   导出表 —— 隐式导出全部顶层名字，或用 `return { ... }` 显式导出。
+- **HTTP 与 JSON 内置**：`http.get` / `http.post` 发请求，`http.serve`
+  几行起一个服务器 —— 路由是表、请求是表、处理函数就是 Fun 闭包；
+  `json.encode` / `json.decode` 让表和 JSON 互转（小数依然精确）。
 
 ## 运行
 
@@ -534,6 +537,54 @@ print(has(stack, "helper"))      // false（没导出）
 
 （完整演示见 [`__example/module.fun`](__example/module.fun) 与 `__example/pkg/`）
 
+### HTTP 与 JSON
+
+内置 `http` 表与 `json` 表（零依赖，Go 标准库实现），延续"一切都是表"：
+**响应是表、请求是表、路由是表、处理函数就是 Fun 函数**。
+（完整演示见 [`__example/http.fun`](__example/http.fun)）
+
+**客户端**：
+
+```js
+r := http.get("https://example.com/api?x=1")
+print(r.ok, r.status, r.body, r.headers["Content-Type"])
+
+r := http.post(url, json.encode({ name: "Gin" }),
+               { "Content-Type": "application/json" })
+
+// 完全控制：方法 / 请求头 / 超时（秒，默认 30）
+r := http.request({ method: "PUT", url: url, body: "...",
+                    headers: { "X-Token": "..." }, timeout: 5 })
+// 失败时 r.ok == false，r.error 是原因
+```
+
+**服务端** —— 几行起一个服务：
+
+```js
+visits := 0
+routes := {
+    "/hello": fun(req) { return "hello, " + (req.query["name"] || "世界") },
+    "/visit": fun(req) { visits = visits + 1  return `第 ${visits} 位` },
+    "/user":  fun(req) { return {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: json.encode({ name: "Gin" })
+    } },
+    "*":      fun(req) { return { status: 404, body: "not found" } }
+}
+http.serve(":8080", routes)          // 前台阻塞；http.listen 则后台启动
+```
+
+- 路由表按 `path` 精确匹配，`"*"` 兜底；也可以直接传一个函数处理全部路径。
+- 处理函数收到请求表 `{ method, path, query, headers, body }`，
+  返回字符串（200 + 正文）或 `{ status, body, headers }`（三个字段都可选）。
+- 处理函数是真正的 Fun 闭包，能读写脚本里的变量；Go 服务器并发进来的
+  请求会**串行**进入解释器（Fun 是单线程协作式的）。
+
+**JSON**：`json.encode(v)` / `json.decode(s)` 在表和 JSON 之间互转。
+连续数字键 `0..n-1` 的表编码成 JSON 数组，其余编码成对象；解码时数字
+走数字塔 —— `json.decode('{"x":0.1}').x + 0.2 == 0.3` 依然为真。
+
 ### 内置函数
 
 | 函数 | 说明 |
@@ -552,6 +603,8 @@ print(has(stack, "helper"))      // false（没导出）
 | `now()` | 当前时间 |
 | `import(path)` | 加载一个 `.fun` 模块，返回其导出表 |
 | `coroutine(fn)` / `resume(co, ...)` / `yield(v)` / `costatus(co)` | 协程原语 |
+| `http.get/post/request/serve/listen` | HTTP 客户端与服务端（见"HTTP 与 JSON"） |
+| `json.encode(v)` / `json.decode(s)` | 表 <-> JSON（数字走数字塔，小数精确） |
 | `VERSION` | 版本号常量 |
 
 完整可运行的示例见 [`__example/showcase.fun`](__example/showcase.fun)。
@@ -591,7 +644,9 @@ print(has(stack, "helper"))      // false（没导出）
 │   ├── vm.go          求值与作用域
 │   ├── interface.go   内置函数
 │   ├── module.go      多文件编程：import / 导出
-│   └── coroutine.go   协程：coroutine / resume / yield
+│   ├── coroutine.go   协程：coroutine / resume / yield
+│   ├── http.go        HTTP 客户端与服务端
+│   └── json.go        表 <-> JSON
 └── __example/         示例代码
     ├── base.fun       基础语法
     ├── fibonaci.fun   递归：斐波那契
@@ -601,6 +656,7 @@ print(has(stack, "helper"))      // false（没导出）
     ├── magic.fun      管道 | / 分发表 / 事件系统 / 数据流水线
     ├── meta.fun       元编程 @ 空间 / 字符串转义 / 模板字符串 / 真值规则
     ├── precision.fun  数字精度：0.1+0.2==0.3 / 溢出提升 / 精确除法
+    ├── http.fun       HTTP 服务器 + 客户端 + JSON
     ├── coroutine.fun  协程：生成器 / 双向通信 / 协作式调度
     ├── module.fun     多文件编程：导入 pkg/ 下的模块
     ├── pkg/           被导入的模块（mathlib.fun / stack.fun）
