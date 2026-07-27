@@ -164,6 +164,51 @@ func TestCallValueRequiresSameLine(t *testing.T) {
 	}
 }
 
+func TestPipeLowestPrecedence(t *testing.T) {
+	// 管道低于 ||：a || b | f  =>  f(a || b)
+	if got := first(t, `a || b | f`); got != "[f [or a b]]" {
+		t.Errorf("pipe vs || => %s", got)
+	}
+	// 管道右侧的 @ 运算符调用
+	if got := first(t, `x | @add(3)`); got != "[@add x 3]" {
+		t.Errorf("pipe into @op => %s", got)
+	}
+}
+
+func TestStatementLevelAnonymousFun(t *testing.T) {
+	// 语句位置的匿名函数是表达式，不是具名定义
+	if got := first(t, `fun(x) { return x }`); got != "[fun-expr [x] [begin [return x]]]" {
+		t.Errorf("statement fun-expr => %s", got)
+	}
+	// 具名定义不受影响
+	if got := first(t, `fun f(x) { return x }`); got != "[fun f [x] [begin [return x]]]" {
+		t.Errorf("named fun => %s", got)
+	}
+}
+
+func TestNestedTableLiteral(t *testing.T) {
+	if got := first(t, `{ a: { b: 1 } }`); got != `[table "a" [table "b" 1]]` {
+		t.Errorf("nested table => %s", got)
+	}
+	// 表里放匿名函数
+	if got := first(t, `{ f: fun() { return 1 } }`); got != `[table "f" [fun-expr [] [begin [return 1]]]]` {
+		t.Errorf("table with fun => %s", got)
+	}
+}
+
+func TestMethodCallWithArgs(t *testing.T) {
+	if got := first(t, `obj.m(1, 2)`); got != "[method-call obj m 1 2]" {
+		t.Errorf("method args => %s", got)
+	}
+}
+
+func TestReturnWithoutValue(t *testing.T) {
+	got := first(t, `fun f() { return }`)
+	if got != "[fun f [] [begin [return <nil>]]]" {
+		t.Errorf("bare return => %s", got)
+	}
+}
+
 func TestOperatorsCompileToAtSpace(t *testing.T) {
 	// 全部运算符落入 @ 空间
 	ops := map[string]string{
