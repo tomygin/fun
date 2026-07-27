@@ -676,6 +676,67 @@ func TestMergePriority(t *testing.T) {
 	}
 }
 
+// ---------- JSON ----------
+
+func TestJSONRoundTrip(t *testing.T) {
+	code := `
+	s := json.encode({ name: "Gin", age: 18, tags: { "a", "b" } })
+	back := json.decode(s)
+	back.name + str(back.age) + back.tags[1]`
+	if got := run(t, code); got != "Gin18b" {
+		t.Errorf("json roundtrip = %v, want Gin18b", got)
+	}
+}
+
+func TestJSONArrayEncoding(t *testing.T) {
+	if got := run(t, `json.encode({ 1, 2, 3 })`); got != "[1,2,3]" {
+		t.Errorf("array encode = %v, want [1,2,3]", got)
+	}
+}
+
+func TestJSONExactDecimal(t *testing.T) {
+	// JSON 数字走数字塔：0.1 解码后依然精确
+	code := `back := json.decode('{"x": 0.1}')  back.x + 0.2 == 0.3`
+	if got := run(t, code); got != true {
+		t.Errorf("json decimal exact = %v, want true", got)
+	}
+}
+
+// ---------- HTTP：服务端 + 客户端 ----------
+
+func TestHTTPServerAndClient(t *testing.T) {
+	code := `
+	routes := {
+		"/hello": fun(req) { return "hi, " + req.query["name"] },
+		"/echo":  fun(req) { return { status: 201, body: req.body } },
+		"*":      fun(req) { return { status: 404, body: "miss" } }
+	}
+	http.listen("127.0.0.1:18921", routes)
+	r1 := http.get("http://127.0.0.1:18921/hello?name=Tom")
+	r2 := http.post("http://127.0.0.1:18921/echo", "ping")
+	r3 := http.get("http://127.0.0.1:18921/nope")
+	r1.body + "|" + str(r2.status) + r2.body + "|" + str(r3.status) + str(r3.ok)`
+	if got := run(t, code); got != "hi, Tom|201ping|404false" {
+		t.Errorf("http roundtrip = %v", got)
+	}
+}
+
+func TestHTTPHandlerUsesInterpreterState(t *testing.T) {
+	// 处理函数是真正的 Fun 闭包：能读写脚本里的变量
+	code := `
+	count := 0
+	http.listen("127.0.0.1:18922", {
+		"/inc": fun(req) { count = count + 1  return str(count) }
+	})
+	http.get("http://127.0.0.1:18922/inc")
+	http.get("http://127.0.0.1:18922/inc")
+	r := http.get("http://127.0.0.1:18922/inc")
+	r.body + "/" + str(count)`
+	if got := run(t, code); got != "3/3" {
+		t.Errorf("handler closure = %v, want 3/3", got)
+	}
+}
+
 // runInDir 在指定目录下求值代码（供 import 测试解析相对路径）
 func runInDir(t *testing.T, dir, code string) any {
 	t.Helper()
