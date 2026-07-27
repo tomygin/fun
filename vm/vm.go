@@ -3,7 +3,6 @@ package vm
 import (
 	"fmt"
 	"fun/number"
-	"maps"
 	"math/big"
 	"reflect"
 	"strconv"
@@ -49,10 +48,6 @@ func (env *Environment) Set(name string, value any) any {
 	return value
 }
 
-func (env *Environment) Get(name string) any {
-	return env.local[name]
-}
-
 func (env *Environment) Assign(name string, value any) (any, error) {
 	if _, exists := env.local[name]; exists {
 		return env.Set(name, value), nil
@@ -61,12 +56,6 @@ func (env *Environment) Assign(name string, value any) (any, error) {
 		return env.parent.Assign(name, value)
 	}
 	return nil, fmt.Errorf(`"%s" is not found in Environment`, name)
-}
-
-func (env *Environment) Clone() *Environment {
-	newLocal := make(map[string]any)
-	maps.Copy(newLocal, env.local)
-	return NewEnvironment(newLocal, env.parent)
 }
 
 // Next 进入子作用域：直接以当前环境为父，零拷贝。
@@ -161,11 +150,6 @@ func isVar(exp any) bool {
 
 func isList(exp any) bool {
 	_, ok := exp.([]any)
-	return ok
-}
-
-func isDict(exp any) bool {
-	_, ok := exp.(map[string]any)
 	return ok
 }
 
