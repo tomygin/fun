@@ -49,9 +49,7 @@ func (vm *VM) interpolate(s string) (string, error) {
 			}
 			exprSrc := s[i+2 : j-1]
 
-			tokens := lexer.NewLexer().Tokenize(exprSrc)
-			ast := parser.NewParser().Parse(tokens)
-			value, err := vm.Eval(ast)
+			value, err := vm.evalSource(exprSrc)
 			if err != nil {
 				return "", err
 			}
@@ -63,6 +61,30 @@ func (vm *VM) interpolate(s string) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// parseModule 解析模块源码，panic 转错误
+func parseModule(src string) (ast []any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("syntax error: %v", r)
+		}
+	}()
+	tokens := lexer.NewLexer().Tokenize(src)
+	return parser.NewParser().Parse(tokens), nil // ["begin", 语句...]
+}
+
+// evalSource 把一段源码走一遍 词法 -> 语法 -> 求值；
+// 词法/语法的 panic 被转成普通错误（可被 try 捕获，也让顶层报错干净）。
+func (vm *VM) evalSource(src string) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("syntax error: %v", r)
+		}
+	}()
+	tokens := lexer.NewLexer().Tokenize(src)
+	ast := parser.NewParser().Parse(tokens)
+	return vm.Eval(ast)
 }
 
 // importModule 加载并求值一个模块文件，返回它导出的表。
@@ -89,8 +111,11 @@ func (vm *VM) importModule(path string) (any, error) {
 		return nil, fmt.Errorf("import %q failed: %v", path, err)
 	}
 
-	tokens := lexer.NewLexer().Tokenize(string(source))
-	ast := parser.NewParser().Parse(tokens) // ["begin", 语句...]
+	// 模块的词法/语法错误转成普通错误（可被 try 捕获）
+	ast, err := parseModule(string(source))
+	if err != nil {
+		return nil, fmt.Errorf("import %q: %v", path, err)
+	}
 
 	// 为模块创建独立环境，以内置函数环境为根
 	moduleEnv := NewEnvironment(nil, vm.global)

@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"encoding/json"
 	"fun/number"
 	"sort"
@@ -19,29 +20,43 @@ import (
 // ----------------------------------------------------------------------------
 
 var jsonTable = map[string]any{
+	// json.encode(v [, indent]) -> JSON 字符串；indent 为缩进空格数（美化输出）
 	"encode": func(args ...any) any {
 		if len(args) < 1 {
 			return "null"
 		}
 		var b strings.Builder
 		encodeJSON(&b, args[0])
-		return b.String()
+		out := b.String()
+
+		// 可选第二参数：缩进空格数
+		if len(args) >= 2 {
+			if n, ok := number.ToFloat(args[1]); ok && n > 0 {
+				var pretty bytes.Buffer
+				if err := json.Indent(&pretty, []byte(out), "", strings.Repeat(" ", int(n))); err == nil {
+					return pretty.String()
+				}
+			}
+		}
+		return out
 	},
-	"decode": func(args ...any) any {
+	// json.decode(s) -> 值；非法 JSON 抛出错误（用 try 捕获），
+	// 因此合法的 "null" 解码为 nil 与"解析失败"能明确区分。
+	"decode": func(args ...any) (any, error) {
 		if len(args) < 1 {
-			return nil
+			return nil, &FunError{Value: "json.decode requires a string"}
 		}
 		s, ok := args[0].(string)
 		if !ok {
-			return nil
+			return nil, &FunError{Value: "json.decode requires a string"}
 		}
 		dec := json.NewDecoder(strings.NewReader(s))
 		dec.UseNumber() // 数字保持字符串形态，交给数字塔精确解析
 		var raw any
 		if err := dec.Decode(&raw); err != nil {
-			return nil
+			return nil, &FunError{Value: "invalid json: " + err.Error()}
 		}
-		return fromJSON(raw)
+		return fromJSON(raw), nil
 	},
 }
 

@@ -279,6 +279,9 @@ func NewVM() *VM {
 	// json 是纯函数表。两者都是"模块即表"哲学的内置版。
 	env.Set("http", vm.httpTable())
 	env.Set("json", jsonTable)
+	// 错误处理：throw 抛出任意值，try 调用函数并捕获错误
+	env.Set("throw", throwFunc)
+	env.Set("try", vm.tryFunc())
 	return vm
 }
 
@@ -776,6 +779,11 @@ func (vm *VM) applyFunctionSelf(fnValue any, args []any, self map[string]any) (a
 	// 内置函数快速路径：直接类型断言调用，绕开 reflect（快一个数量级）
 	if f, ok := fnValue.(func(...any) any); ok {
 		return f(args...), nil
+	}
+
+	// 可抛错的内置函数（throw / assert / json.decode 等用这种签名）
+	if f, ok := fnValue.(func(...any) (any, error)); ok {
+		return f(args...)
 	}
 
 	// 用户定义函数（表形式）

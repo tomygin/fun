@@ -394,19 +394,19 @@ var interfaceFunctions = map[string]any{
 		}
 		return strings.ToLower(formatValue(args[0]))
 	},
-	// assert 断言，失败则 panic
-	"assert": func(args ...any) any {
+	// assert 断言，失败抛出错误（可被 try 捕获）
+	"assert": func(args ...any) (any, error) {
 		if len(args) < 1 {
-			return nil
+			return nil, nil
 		}
 		if !toBool(args[0]) {
-			msg := "assertion failed"
+			var msg any = "assertion failed"
 			if len(args) >= 2 {
-				msg = formatValue(args[1])
+				msg = args[1]
 			}
-			panic(msg)
+			return nil, &FunError{Value: msg}
 		}
-		return true
+		return true, nil
 	},
 	// costatus 返回协程状态："suspended" / "running" / "dead"
 	"costatus": func(args ...any) any {

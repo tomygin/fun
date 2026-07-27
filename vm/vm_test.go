@@ -702,6 +702,118 @@ func TestJSONExactDecimal(t *testing.T) {
 	}
 }
 
+// ---------- 错误处理：throw / try ----------
+
+func TestTryOk(t *testing.T) {
+	code := `
+	r := try(fun() { return 42 })
+	str(r.ok) + "/" + str(r.value)`
+	if got := run(t, code); got != "true/42" {
+		t.Errorf("try ok = %v, want true/42", got)
+	}
+}
+
+func TestThrowAndCatch(t *testing.T) {
+	code := `
+	fun withdraw(balance, n) {
+		if n > balance { throw("余额不足") }
+		return balance - n
+	}
+	r := try(withdraw, 100, 500)
+	str(r.ok) + "/" + r.error`
+	if got := run(t, code); got != "false/余额不足" {
+		t.Errorf("throw/catch = %v", got)
+	}
+}
+
+func TestThrowTableError(t *testing.T) {
+	code := `
+	r := try(fun() { throw({ code: 404, msg: "not found" }) })
+	str(r.error.code) + "/" + r.error.msg`
+	if got := run(t, code); got != "404/not found" {
+		t.Errorf("table error = %v", got)
+	}
+}
+
+func TestTryCatchesRuntimeError(t *testing.T) {
+	code := `
+	r := try(fun() { return no_such_variable })
+	r.ok`
+	if got := run(t, code); got != false {
+		t.Errorf("runtime error not caught: %v", got)
+	}
+}
+
+func TestErrorPropagatesThroughCalls(t *testing.T) {
+	code := `
+	fun deep() { throw("deep error") }
+	fun mid() { deep()  return "unreachable" }
+	r := try(mid)
+	r.error`
+	if got := run(t, code); got != "deep error" {
+		t.Errorf("propagation = %v", got)
+	}
+}
+
+func TestNestedTry(t *testing.T) {
+	code := `
+	r := try(fun() {
+		inner := try(fun() { throw("inner") })
+		return "caught: " + inner.error
+	})
+	str(r.ok) + "/" + r.value`
+	if got := run(t, code); got != "true/caught: inner" {
+		t.Errorf("nested try = %v", got)
+	}
+}
+
+func TestAssertCatchable(t *testing.T) {
+	code := `
+	r := try(fun() { assert(1 > 2, "impossible") })
+	str(r.ok) + "/" + r.error`
+	if got := run(t, code); got != "false/impossible" {
+		t.Errorf("assert catchable = %v", got)
+	}
+}
+
+func TestUncaughtThrowBubbles(t *testing.T) {
+	tokens := lexer.NewLexer().Tokenize(`throw("boom")`)
+	ast := parser.NewParser().Parse(tokens)
+	_, err := vm.NewVM().Call(ast)
+	fe, ok := err.(*vm.FunError)
+	if !ok || fe.Value != "boom" {
+		t.Errorf("uncaught throw = %v, want FunError(boom)", err)
+	}
+}
+
+// ---------- JSON 补齐：错误与美化 ----------
+
+func TestJSONDecodeInvalidCatchable(t *testing.T) {
+	code := `
+	r := try(json.decode, "{bad")
+	r.ok`
+	if got := run(t, code); got != false {
+		t.Errorf("invalid json not caught: %v", got)
+	}
+}
+
+func TestJSONDecodeNullVsError(t *testing.T) {
+	// 合法的 "null" 解码成 nil，与解析失败可区分
+	code := `
+	r := try(json.decode, "null")
+	str(r.ok) + "/" + str(r.value)`
+	if got := run(t, code); got != "true/nil" {
+		t.Errorf("null decode = %v, want true/nil", got)
+	}
+}
+
+func TestJSONEncodeIndent(t *testing.T) {
+	code := `json.encode({ a: 1 }, 2)`
+	if got := run(t, code); got != "{\n  \"a\": 1\n}" {
+		t.Errorf("indent = %q", got)
+	}
+}
+
 // ---------- HTTP：服务端 + 客户端 ----------
 
 func TestHTTPServerAndClient(t *testing.T) {

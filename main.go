@@ -18,8 +18,17 @@ func main() {
 
 	source, err := os.ReadFile(os.Args[1])
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "错误:", err)
+		os.Exit(1)
 	}
+
+	// 词法/语法错误：干净地报错退出，不打 Go 堆栈
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, "语法错误:", r)
+			os.Exit(1)
+		}
+	}()
 
 	tokens := lexer.NewLexer().Tokenize(string(source))
 	ast := parser.NewParser().Parse(tokens)
@@ -29,7 +38,13 @@ func main() {
 	machine.SetDir(filepath.Dir(os.Args[1]))
 
 	if _, err := machine.Call(ast); err != nil {
-		panic(err)
+		// 未被 try 捕获的错误一路冒泡到这里
+		if fe, ok := err.(*vm.FunError); ok {
+			fmt.Fprintln(os.Stderr, "未捕获的错误:", fe.Error())
+		} else {
+			fmt.Fprintln(os.Stderr, "运行时错误:", err)
+		}
+		os.Exit(1)
 	}
 
 }
