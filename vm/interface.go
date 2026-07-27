@@ -212,23 +212,30 @@ var interfaceFunctions = map[string]any{
 		}
 		return 1
 	},
-	"@div": func(args ...any) any {
+	"@div": func(args ...any) (any, error) {
 		if len(args) < 2 {
-			return 0
+			return 0, nil
+		}
+		// 除零抛出可捕获的错误（用 try 接住），而不是静默返回 0
+		if number.Is(args[1]) && number.IsZero(args[1]) {
+			return nil, &FunError{Value: "division by zero"}
 		}
 		if r, ok := number.Div(args[0], args[1]); ok {
-			return r
+			return r, nil
 		}
-		return 0
+		return 0, nil
 	},
-	"@mod": func(args ...any) any {
+	"@mod": func(args ...any) (any, error) {
 		if len(args) < 2 {
-			return 0
+			return 0, nil
+		}
+		if number.Is(args[1]) && number.IsZero(args[1]) {
+			return nil, &FunError{Value: "modulo by zero"}
 		}
 		if r, ok := number.Mod(args[0], args[1]); ok {
-			return r
+			return r, nil
 		}
-		return 0
+		return 0, nil
 	},
 	"print": func(args ...any) any {
 		parts := make([]string, 0, len(args))

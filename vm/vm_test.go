@@ -786,6 +786,36 @@ func TestUncaughtThrowBubbles(t *testing.T) {
 	}
 }
 
+func TestDivisionByZeroThrows(t *testing.T) {
+	code := `
+	r := try(fun() { return 1 / 0 })
+	str(r.ok) + "/" + r.error`
+	if got := run(t, code); got != "false/division by zero" {
+		t.Errorf("div by zero = %v", got)
+	}
+	code = `
+	r := try(fun() { return 10 % 0 })
+	str(r.ok) + "/" + r.error`
+	if got := run(t, code); got != "false/modulo by zero" {
+		t.Errorf("mod by zero = %v", got)
+	}
+	// 0.0 也是零
+	code = `try(fun() { return 1 / 0.0 }).ok`
+	if got := run(t, code); got != false {
+		t.Errorf("div by 0.0 not caught: %v", got)
+	}
+}
+
+func TestUncaughtDivisionByZeroBubbles(t *testing.T) {
+	tokens := lexer.NewLexer().Tokenize(`1 / 0`)
+	ast := parser.NewParser().Parse(tokens)
+	_, err := vm.NewVM().Call(ast)
+	fe, ok := err.(*vm.FunError)
+	if !ok || fe.Value != "division by zero" {
+		t.Errorf("uncaught div-zero = %v, want FunError(division by zero)", err)
+	}
+}
+
 // ---------- JSON 补齐：错误与美化 ----------
 
 func TestJSONDecodeInvalidCatchable(t *testing.T) {
@@ -846,6 +876,202 @@ func TestHTTPHandlerUsesInterpreterState(t *testing.T) {
 	r.body + "/" + str(count)`
 	if got := run(t, code); got != "3/3" {
 		t.Errorf("handler closure = %v, want 3/3", got)
+	}
+}
+
+// ---------- 内置函数边角 ----------
+
+func TestLenUnicode(t *testing.T) {
+	// len 按字符数（rune）而不是字节数
+	if got := run(t, `len("你好ab")`); got != 4 {
+		t.Errorf("len(你好ab) = %v, want 4", got)
+	}
+}
+
+func TestTableBuiltins(t *testing.T) {
+	if got := run(t, `t := { a: 1 }  del(t, "a")  len(t)`); got != 0 {
+		t.Errorf("del 后 len = %v", got)
+	}
+	if got := run(t, `has({ a: 1 }, "a")`); got != true {
+		t.Errorf("has = %v", got)
+	}
+	if got := run(t, `ks := keys({ b: 1, a: 2 })  ks[0] + ks[1]`); got != "ab" {
+		t.Errorf("keys 应有序 = %v", got)
+	}
+}
+
+func TestStringConcatMixedTypes(t *testing.T) {
+	if got := run(t, `"n=" + 0.5`); got != "n=0.5" {
+		t.Errorf("字符串+数字 = %v", got)
+	}
+	if got := run(t, `1 + "x"`); got != "1x" {
+		t.Errorf("数字+字符串 = %v", got)
+	}
+	if got := run(t, `"b:" + true + " n:" + nil`); got != "b:true n:nil" {
+		t.Errorf("字符串+布尔/nil = %v", got)
+	}
+}
+
+func TestAtKeysAreHidden(t *testing.T) {
+	// 用户放进表的 @ 键对 len / keys / print 不可见
+	code := `
+	t := { a: 1 }
+	t["@secret"] = 2
+	str(len(t)) + "/" + str(has(t, "@secret"))`
+	// has 用原始键查（能查到），但 len 不统计
+	if got := run(t, code); got != "1/true" {
+		t.Errorf("@ 键隐藏 = %v", got)
+	}
+}
+
+func TestScopeShadowingAndClosure(t *testing.T) {
+	// 块内 := 遮蔽外层，块退出恢复
+	code := `
+	x := 1
+	if true {
+		x := 100
+		x = x + 1
+	}
+	x`
+	if got := run(t, code); got != 1 {
+		t.Errorf("遮蔽后外层 x = %v, want 1", got)
+	}
+	// 块内 = 修改外层
+	code = `
+	x := 1
+	if true { x = 100 }
+	x`
+	if got := run(t, code); got != 100 {
+		t.Errorf("块内赋值外层 x = %v, want 100", got)
+	}
+	// 两个闭包共享同一份捕获状态
+	code = `
+	fun pair() {
+		n := 0
+		return {
+			inc: fun() { n = n + 1  return n },
+			get: fun() { return n }
+		}
+	}
+	p := pair()
+	p.inc()
+	p.inc()
+	p.get()`
+	if got := run(t, code); got != 2 {
+		t.Errorf("闭包共享 = %v, want 2", got)
+	}
+}
+
+func TestTemplateStringEdges(t *testing.T) {
+	// 相邻插值、开头结尾插值
+	code := "a := 1\nb := 2\n`${a}${b}`"
+	if got := run(t, code); got != "12" {
+		t.Errorf("相邻插值 = %v", got)
+	}
+	// 未闭合 ${ 是可捕获的错误
+	code = "r := try(fun() { return `${1 + ` })\nr.ok"
+	if got := run(t, code); got != false {
+		t.Errorf("未闭合插值应报错: %v", got)
+	}
+}
+
+func TestCoroutineResumeDeadCatchable(t *testing.T) {
+	code := `
+	fun g() { return 1 }
+	co := coroutine(g)
+	resume(co)
+	r := try(fun() { return resume(co) })
+	r.ok`
+	if got := run(t, code); got != false {
+		t.Errorf("resume dead 应可捕获: %v", got)
+	}
+}
+
+func TestModuleCacheIdentity(t *testing.T) {
+	dir := t.TempDir()
+	mod := "counter := 0\nfun bump() { counter = counter + 1  return counter }\n"
+	if err := os.WriteFile(filepath.Join(dir, "m.fun"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 两次 import 拿到同一模块实例：状态共享
+	code := `
+	a := import("m")
+	b := import("m")
+	a.bump()
+	b.bump()`
+	if got := runInDir(t, dir, code); got != 2 {
+		t.Errorf("模块缓存共享状态 = %v, want 2", got)
+	}
+}
+
+func TestModuleSyntaxErrorCatchable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.fun"), []byte("1 +* 2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := `try(fun() { return import("bad") }).ok`
+	if got := runInDir(t, dir, code); got != false {
+		t.Errorf("模块语法错误应可捕获: %v", got)
+	}
+}
+
+func TestTryOnNonFunction(t *testing.T) {
+	code := `try(42).ok`
+	if got := run(t, code); got != false {
+		t.Errorf("try(非函数) = %v, want false", got)
+	}
+}
+
+func TestPipeIntoMethodWithArgs(t *testing.T) {
+	code := `
+	fmt := { wrap: fun(s, l, r) { return l + s + r } }
+	"x" | fmt.wrap("[", "]")`
+	if got := run(t, code); got != "[x]" {
+		t.Errorf("管道进带参方法 = %v", got)
+	}
+}
+
+func TestAnonymousFunStatement(t *testing.T) {
+	// 语句位置的匿名函数不再 panic（作为表达式求值）
+	code := `
+	fun(x) { return x }
+	"after"`
+	if got := run(t, code); got != "after" {
+		t.Errorf("语句级匿名函数 = %v", got)
+	}
+}
+
+func TestComparisonNonNumbers(t *testing.T) {
+	// 非数字比较大小返回 false 而不是崩溃
+	if got := run(t, `"a" > "b"`); got != false {
+		t.Errorf("字符串 > = %v", got)
+	}
+	if got := run(t, `nil < 1`); got != false {
+		t.Errorf("nil < 1 = %v", got)
+	}
+}
+
+func TestNegativeUnaryChain(t *testing.T) {
+	if got := run(t, `- -5`); got != 5 {
+		t.Errorf("- -5 = %v", got)
+	}
+	if got := run(t, `!!true`); got != true {
+		t.Errorf("!!true = %v", got)
+	}
+}
+
+func TestThisSnapshotSkipsPrivate(t *testing.T) {
+	// return this 打包作用域时跳过 @ 内部名
+	code := `
+	fun mk() {
+		x := 1
+		@add := fun(a, b) { return 0 }
+		return this
+	}
+	t := mk()
+	str(len(t)) + "/" + str(has(t, "x"))`
+	if got := run(t, code); got != "1/true" {
+		t.Errorf("this 快照 = %v", got)
 	}
 }
 

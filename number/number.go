@@ -375,7 +375,8 @@ func Mul(a, b any) (any, bool) {
 }
 
 // Div 精确除法：除得尽降回快层，除不尽保持精确有理数。
-// 除数为零返回 (0, true)，与语言既有语义保持一致。
+// 除数为零返回 (0, true) 仅作兜底 —— 语言层（@div）在此之前
+// 已把除零转成可捕获的错误。
 func Div(a, b any) (any, bool) {
 	if !Is(a) || !Is(b) {
 		return nil, false
@@ -392,7 +393,8 @@ func Div(a, b any) (any, bool) {
 	return ratOp(a, b, func(r, x, y *big.Rat) { r.Quo(x, y) })
 }
 
-// Mod 取模：a - b*trunc(a/b)。除数为零返回 (0, true)。
+// Mod 取模：a - b*trunc(a/b)。除数为零返回 (0, true) 仅作兜底 ——
+// 语言层（@mod）在此之前已把模零转成可捕获的错误。
 func Mod(a, b any) (any, bool) {
 	if !Is(a) || !Is(b) {
 		return nil, false
