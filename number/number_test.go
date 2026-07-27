@@ -192,6 +192,56 @@ func TestIsAndIsZero(t *testing.T) {
 	}
 }
 
+func TestVeryLongDecimalStaysExact(t *testing.T) {
+	// 超过 18 位定点容量的小数落到 Rat，等值判断依旧精确
+	lit := "0.1234567890123456789012345"
+	a, err := number.ParseDec(lit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.(*big.Rat); !ok {
+		t.Fatalf("超长小数应是 *big.Rat, got %T", a)
+	}
+	b, _ := number.ParseDec(lit)
+	if c, _ := number.Cmp(a, b); c != 0 {
+		t.Error("同字面量两次解析应精确相等")
+	}
+	// 加法仍精确：x + x == 2x
+	double, _ := number.Add(a, a)
+	twice, _ := number.Mul(a, 2)
+	if c, _ := number.Cmp(double, twice); c != 0 {
+		t.Error("超长小数运算应精确")
+	}
+}
+
+func TestMixedTierArithmetic(t *testing.T) {
+	// int + Dec -> Dec
+	half, _ := number.ParseDec("0.5")
+	s, _ := number.Add(1, half)
+	if number.Format(s) != "1.5" {
+		t.Errorf("1 + 0.5 = %s", number.Format(s))
+	}
+	// Dec * int 溢出提升后仍正确
+	big1, _ := number.ParseDec("0.9")
+	huge, _ := number.Mul(big1, int(9223372036854775807))
+	if c, _ := number.Cmp(huge, int(9223372036854775807)); c != -1 {
+		t.Errorf("0.9 * int64max 应小于 int64max")
+	}
+}
+
+func TestSubToNegative(t *testing.T) {
+	d, _ := number.Sub(1, 3)
+	if d != -2 {
+		t.Errorf("1-3 = %v", d)
+	}
+	a, _ := number.ParseDec("0.1")
+	b, _ := number.ParseDec("0.3")
+	diff, _ := number.Sub(a, b)
+	if number.Format(diff) != "-0.2" {
+		t.Errorf("0.1-0.3 = %s", number.Format(diff))
+	}
+}
+
 func TestNonNumberOperands(t *testing.T) {
 	if _, ok := number.Add("a", 1); ok {
 		t.Error("字符串参与 Add 应失败")

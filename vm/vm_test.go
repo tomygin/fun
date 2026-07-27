@@ -1075,6 +1075,306 @@ func TestThisSnapshotSkipsPrivate(t *testing.T) {
 	}
 }
 
+// ---------- 第二批：错误可达性 ----------
+
+func TestAssignUndeclaredCatchable(t *testing.T) {
+	if got := run(t, `try(fun() { zzz = 1 }).ok`); got != false {
+		t.Errorf("给未声明变量赋值应可捕获: %v", got)
+	}
+}
+
+func TestIndexAssignNonTableCatchable(t *testing.T) {
+	if got := run(t, `try(fun() { x := 1  x[0] = 2 }).ok`); got != false {
+		t.Errorf("对非表下标赋值应可捕获: %v", got)
+	}
+}
+
+func TestStringIndexOutOfRangeCatchable(t *testing.T) {
+	if got := run(t, `try(fun() { s := "ab"  return s[99] }).ok`); got != false {
+		t.Errorf("字符串越界应可捕获: %v", got)
+	}
+}
+
+func TestMethodNotFoundCatchable(t *testing.T) {
+	if got := run(t, `try(fun() { t := { a: 1 }  return t.nope() }).ok`); got != false {
+		t.Errorf("方法不存在应可捕获: %v", got)
+	}
+}
+
+func TestPropertyMissingVsIndexMissing(t *testing.T) {
+	// 语义差异：t.missing 报错（可捕获），t["missing"] 返回 nil（借鉴 lua）
+	if got := run(t, `try(fun() { t := {}  return t.missing }).ok`); got != false {
+		t.Errorf("缺失属性应报错: %v", got)
+	}
+	if got := run(t, `t := {}  t["missing"] == nil`); got != true {
+		t.Errorf("缺失下标应返回 nil: %v", got)
+	}
+}
+
+func TestThrowNoArgs(t *testing.T) {
+	if got := run(t, `try(throw).error`); got != "error" {
+		t.Errorf("throw() 默认错误值 = %v", got)
+	}
+}
+
+func TestFunctionReturnsLastExpression(t *testing.T) {
+	// 表达式导向（lisp 血统）：没有 return 时，函数值 = 最后一条语句的值
+	code := `r := try(fun() { x := 1  x + 1 })  str(r.ok) + "/" + str(r.value)`
+	if got := run(t, code); got != "true/2" {
+		t.Errorf("最后表达式即返回值 = %v", got)
+	}
+	// 直接调用同理
+	if got := run(t, `fun f() { 40 + 2 }  f()`); got != 42 {
+		t.Errorf("无 return 函数 = %v", got)
+	}
+}
+
+// ---------- 第二批：@ 元编程进阶 ----------
+
+func TestOverrideEqAffectsDoubleEquals(t *testing.T) {
+	// == 编译成 @eq 调用，覆盖 @eq 就改变了 == 的含义
+	code := `
+	fun weird() {
+		@eq := fun(a, b) { return true }
+		return 1 == 2
+	}
+	str(weird()) + "/" + str(1 == 2)`
+	if got := run(t, code); got != "true/false" {
+		t.Errorf("覆盖 @eq = %v", got)
+	}
+}
+
+func TestPipeIntoOperator(t *testing.T) {
+	// 管道直接流进运算符函数
+	if got := run(t, `5 | @add(3)`); got != 8 {
+		t.Errorf("5 | @add(3) = %v", got)
+	}
+}
+
+func TestModuleOperatorOverrideIsolated(t *testing.T) {
+	// 模块顶层覆盖 @add：模块内生效，主脚本不受影响（词法作用域跨模块）
+	dir := t.TempDir()
+	mod := "@add := fun(a, b) { return 999 }\nfun probe() { return 1 + 1 }\n"
+	if err := os.WriteFile(filepath.Join(dir, "m.fun"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := `m := import("m")  str(m.probe()) + "/" + str(1 + 1)`
+	if got := runInDir(t, dir, code); got != "999/2" {
+		t.Errorf("模块运算符隔离 = %v", got)
+	}
+}
+
+// ---------- 第二批：模块循环导入 ----------
+
+func TestCircularImport(t *testing.T) {
+	dir := t.TempDir()
+	a := `bmod := import("b.fun")
+fun f() { return "from-a" }
+fun callB() { return bmod.g() }
+`
+	b := `amod := import("a.fun")
+fun g() { return amod.f() }
+`
+	if err := os.WriteFile(filepath.Join(dir, "a.fun"), []byte(a), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.fun"), []byte(b), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// b 拿到 a 的占位表，a 求值完成后占位表被填充，调用期一切正常
+	code := `m := import("a.fun")  m.callB()`
+	if got := runInDir(t, dir, code); got != "from-a" {
+		t.Errorf("循环导入 = %v", got)
+	}
+}
+
+// ---------- 第二批：OOP 语义 ----------
+
+func TestCloneIsShallow(t *testing.T) {
+	// clone 是浅拷贝：嵌套表在实例间共享（有意的语义）
+	code := `
+	proto := { inner: { v: 1 } }
+	a := clone(proto)
+	a.inner.v = 99
+	proto.inner.v`
+	if got := run(t, code); got != 99 {
+		t.Errorf("clone 应是浅拷贝: %v", got)
+	}
+}
+
+func TestMergeReturnsFirstTable(t *testing.T) {
+	code := `
+	dst := { a: 1 }
+	out := merge(dst, { b: 2 })
+	str(out == dst) + "/" + str(dst.b)`
+	// merge 原地修改并返回第一张表
+	if got := run(t, code); got != "true/2" {
+		t.Errorf("merge 返回值 = %v", got)
+	}
+}
+
+// ---------- 第二批：协程进阶 ----------
+
+func TestCoroutineFirstResumePassesArgs(t *testing.T) {
+	code := `
+	fun gen(a, b) { return a + b }
+	co := coroutine(gen)
+	resume(co, 3, 4)`
+	if got := run(t, code); got != 7 {
+		t.Errorf("首次 resume 传参 = %v", got)
+	}
+}
+
+func TestCoroutineThrowCatchable(t *testing.T) {
+	code := `
+	fun g() { throw("协程内部错误") }
+	co := coroutine(g)
+	r := try(fun() { return resume(co) })
+	str(r.ok) + "/" + r.error + "/" + costatus(co)`
+	if got := run(t, code); got != "false/协程内部错误/dead" {
+		t.Errorf("协程内 throw = %v", got)
+	}
+}
+
+func TestCoroutineYieldNoValue(t *testing.T) {
+	code := `
+	fun g() { yield()  return "end" }
+	co := coroutine(g)
+	first := resume(co)
+	second := resume(co)
+	str(first == nil) + "/" + second`
+	if got := run(t, code); got != "true/end" {
+		t.Errorf("无值 yield = %v", got)
+	}
+}
+
+// ---------- 第二批：JSON 边角 ----------
+
+func TestJSONEncodeEdgeCases(t *testing.T) {
+	// 空表编码为对象
+	if got := run(t, `json.encode({})`); got != "{}" {
+		t.Errorf("空表 = %v", got)
+	}
+	// 函数编码为 null
+	if got := run(t, `json.encode({ f: fun() { return 1 } })`); got != `{"f":null}` {
+		t.Errorf("函数字段 = %v", got)
+	}
+	// 嵌套 + 布尔 + nil
+	if got := run(t, `json.encode({ a: { b: true, c: nil } })`); got != `{"a":{"b":true,"c":null}}` {
+		t.Errorf("嵌套 = %v", got)
+	}
+	// 字符串转义
+	if got := run(t, `json.encode({ s: "a\"b" })`); got != `{"s":"a\"b"}` {
+		t.Errorf("转义 = %v", got)
+	}
+}
+
+func TestJSONDecodeTopLevelArray(t *testing.T) {
+	code := `
+	arr := json.decode("[10, 20, 30]")
+	str(len(arr)) + "/" + str(arr[2])`
+	if got := run(t, code); got != "3/30" {
+		t.Errorf("顶层数组 = %v", got)
+	}
+}
+
+func TestJSONUnicodeRoundTrip(t *testing.T) {
+	code := `json.decode(json.encode({ msg: "你好 fun" })).msg`
+	if got := run(t, code); got != "你好 fun" {
+		t.Errorf("unicode 往返 = %v", got)
+	}
+}
+
+func TestJSONDeepRoundTrip(t *testing.T) {
+	code := `
+	src := { users: { { name: "a", vip: true }, { name: "b", vip: false } }, total: 2 }
+	back := json.decode(json.encode(src))
+	back.users[1].name + "/" + str(back.users[0].vip) + "/" + str(back.total)`
+	if got := run(t, code); got != "b/true/2" {
+		t.Errorf("深度往返 = %v", got)
+	}
+}
+
+// ---------- 第二批：HTTP 进阶 ----------
+
+func TestHTTPSingleFunctionRoute(t *testing.T) {
+	// 单个函数接管全部路径
+	code := `
+	http.listen("127.0.0.1:18923", fun(req) { return req.method + " " + req.path })
+	http.get("http://127.0.0.1:18923/any/where").body`
+	if got := run(t, code); got != "GET /any/where" {
+		t.Errorf("函数路由 = %v", got)
+	}
+}
+
+func TestHTTPHandlerThrowGives500(t *testing.T) {
+	code := `
+	http.listen("127.0.0.1:18924", { "/boom": fun(req) { throw("炸了") } })
+	r := http.get("http://127.0.0.1:18924/boom")
+	str(r.status) + "/" + str(r.ok) + "/" + r.body`
+	if got := run(t, code); got != "500/false/炸了" {
+		t.Errorf("handler 抛错 = %v", got)
+	}
+}
+
+func TestHTTPConnectionErrorTable(t *testing.T) {
+	// 连不上的地址：ok=false 且带 error 字段，而不是崩溃
+	code := `
+	r := http.get("http://127.0.0.1:1/x")
+	str(r.ok) + "/" + str(r.error != nil)`
+	if got := run(t, code); got != "false/true" {
+		t.Errorf("连接失败 = %v", got)
+	}
+}
+
+func TestHTTPHandlerReturnsNumber(t *testing.T) {
+	code := `
+	http.listen("127.0.0.1:18925", { "/n": fun(req) { return 0.5 } })
+	http.get("http://127.0.0.1:18925/n").body`
+	if got := run(t, code); got != "0.5" {
+		t.Errorf("数字响应 = %v", got)
+	}
+}
+
+// ---------- 第二批：杂项语义 ----------
+
+func TestMultilineCallArgs(t *testing.T) {
+	// '(' 与函数名同行后，实参可以跨行
+	code := "fun add3(a, b, c) { return a + b + c }\nadd3(1,\n 2,\n 3)"
+	if got := run(t, code); got != 6 {
+		t.Errorf("跨行实参 = %v", got)
+	}
+}
+
+func TestNumOnBoolIsNil(t *testing.T) {
+	if got := run(t, `num(true) == nil`); got != true {
+		t.Errorf("num(true) = %v", got)
+	}
+}
+
+func TestDecimalModExactZero(t *testing.T) {
+	if got := run(t, `2.5 % 0.5 == 0`); got != true {
+		t.Errorf("2.5 %% 0.5 = %v", got)
+	}
+}
+
+func TestDeepNestedReturn(t *testing.T) {
+	// return 从多层块里正确终止函数
+	code := `
+	fun find(t, want) {
+		for i := 0; i < len(t); i++ {
+			if t[i] == want {
+				if true { return i }
+			}
+		}
+		return -1
+	}
+	str(find({ 5, 6, 7 }, 6)) + "/" + str(find({ 5 }, 9))`
+	if got := run(t, code); got != "1/-1" {
+		t.Errorf("深层 return = %v", got)
+	}
+}
+
 // runInDir 在指定目录下求值代码（供 import 测试解析相对路径）
 func runInDir(t *testing.T, dir, code string) any {
 	t.Helper()
